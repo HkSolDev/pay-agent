@@ -13,8 +13,13 @@ h1, h2 { margin: 0; letter-spacing: -.03em; } h1 { font-size: 32px; } h2 { font-
 .card { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
 .card-heading { padding: 22px 24px; border-bottom: 1px solid var(--line); }
 .count, .status { color: var(--muted); font-size: 13px; }
+.message-cell { display: grid; gap: 5px; max-width: 520px; }
+.message-cell span { overflow: hidden; color: var(--muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .table-wrap { overflow-x: auto; } table { width: 100%; border-collapse: collapse; text-align: left; } th, td { padding: 17px 24px; border-bottom: 1px solid var(--line); font-size: 14px; } th { color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; } tbody tr:last-child td { border-bottom: 0; }
-.text-button { border: 0; background: transparent; color: var(--accent); font-weight: 700; }
+.text-button { border: 0; background: transparent; color: var(--accent); font-weight: 700; cursor: pointer; }
+.pay-form { display: flex; flex-direction: column; gap: 6px; min-width: 160px; }
+.pay-form input { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
+.status-warn { color: #8b5e16; font-weight: 600; }
 button:disabled { cursor: not-allowed; opacity: .72; }
 button:focus-visible { outline: 3px solid #8acdc0; outline-offset: 2px; }
 @media (max-width: 640px) { .shell { padding: 28px 16px; } .topbar { align-items: flex-start; flex-direction: column; } .actions { width: 100%; } .actions button { flex: 1; } .notice { flex-direction: column; } th, td { padding: 14px 16px; } }
