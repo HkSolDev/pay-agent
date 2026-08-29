@@ -22,7 +22,9 @@
   "dependencies": {
     "@composio/core": "^0.18.0",
     "@perflo-ap-agent/db": "workspace:*",
-    "dotenv": "^17.4.2"
+    "dotenv": "^17.4.2",
+    "openai": "^7.8.0",
+    "pdf-parse": "^2.4.5"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
