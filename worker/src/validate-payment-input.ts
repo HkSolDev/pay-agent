@@ -22,7 +22,8 @@ export function validatePaymentInput(recipientNickname: string, amount: string):
   if (!AMOUNT_PATTERN.test(amount.trim())) {
     return { ok: false, error: `"${amount}" is not a valid amount — use a plain positive number, e.g. 500.` };
   }
-  if (Number(amount) <= 0) {
+  const numericAmount = Number(amount);
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
     return { ok: false, error: "Amount must be greater than zero." };
   }
   return { ok: true };

@@ -22,6 +22,10 @@ describe("validatePaymentInput", () => {
     expect(validatePaymentInput("riya", "0").ok).toBe(false);
   });
 
+  it("rejects an amount too large for JavaScript to represent safely", () => {
+    expect(validatePaymentInput("riya", "9".repeat(400)).ok).toBe(false);
+  });
+
   it("rejects a currency symbol in the input — that's added later, not typed", () => {
     expect(validatePaymentInput("riya", "₹500").ok).toBe(false);
   });

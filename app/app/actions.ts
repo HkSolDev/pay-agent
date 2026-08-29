@@ -21,6 +21,14 @@ export async function preparePayment(formData: FormData) {
     throw new Error(validation.error ?? "Invalid payment details.");
   }
 
+  // The form normally supplies an id from the queue, but server actions are
+  // still HTTP entry points. Refuse a fabricated/stale id rather than create
+  // an orphan payment intent that cannot be reviewed in the queue.
+  const email = await prisma.email.findUnique({ where: { id: emailId }, select: { id: true } });
+  if (!email) {
+    throw new Error("The email to pay no longer exists.");
+  }
+
   // idempotencyKey is generated once here, at prepare time, and never
   // touched again on re-prepare — it identifies the logical payment, not
   // the attempt (same principle FR-23 uses for the real idempotency key).
