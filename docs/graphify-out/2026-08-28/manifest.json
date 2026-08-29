@@ -1,0 +1,812 @@
+{
+  "CRITICAL_CHECKPOINTS.md": {
+    "mtime": 1787852467.987175,
+    "seen": 1787853275.703881,
+    "ast_hash": "5c0e00ea92ae3dc0774b4d8b017ae3fb",
+    "semantic_hash": "5c0e00ea92ae3dc0774b4d8b017ae3fb"
+  },
+  "INTERVIEW_TRANSCRIPT_YESHU.md": {
+    "mtime": 1787851403.725284,
+    "seen": 1787853275.703885,
+    "ast_hash": "0e4eb7f6b285c2ba3610037c0e84e881",
+    "semantic_hash": "0e4eb7f6b285c2ba3610037c0e84e881"
+  },
+  "PRD_PERFLO_AP_AGENT_V0.md": {
+    "mtime": 1787851434.5999067,
+    "seen": 1787853275.703887,
+    "ast_hash": "c328c487f2602c32b74c3da7003f99b6",
+    "semantic_hash": "c328c487f2602c32b74c3da7003f99b6"
+  },
+  "perflo_docs/agents__connect.md": {
+    "mtime": 1787852457.202686,
+    "seen": 1787853275.703888,
+    "ast_hash": "d35782d0f94adc3978f34913b3ce2207",
+    "semantic_hash": "d35782d0f94adc3978f34913b3ce2207"
+  },
+  "perflo_docs/agents__errors-and-denials.md": {
+    "mtime": 1787852457.203341,
+    "seen": 1787853275.703889,
+    "ast_hash": "eb891a1e3165d6da24c5312e15882d68",
+    "semantic_hash": "eb891a1e3165d6da24c5312e15882d68"
+  },
+  "perflo_docs/agents__overview.md": {
+    "mtime": 1787852457.2038863,
+    "seen": 1787853275.703889,
+    "ast_hash": "b3d7881839f4ae82ac81313979d95b40",
+    "semantic_hash": "b3d7881839f4ae82ac81313979d95b40"
+  },
+  "perflo_docs/agents__security.md": {
+    "mtime": 1787852457.204689,
+    "seen": 1787853275.7038898,
+    "ast_hash": "413b547b333cb4edf5e8565a4abb108e",
+    "semantic_hash": "413b547b333cb4edf5e8565a4abb108e"
+  },
+  "perflo_docs/agents__services.md": {
+    "mtime": 1787852457.2052326,
+    "seen": 1787853275.703891,
+    "ast_hash": "250c878d4c459673b1261f18e8a96b33",
+    "semantic_hash": "250c878d4c459673b1261f18e8a96b33"
+  },
+  "perflo_docs/agents__spending-and-budgets.md": {
+    "mtime": 1787852457.2057881,
+    "seen": 1787853275.703892,
+    "ast_hash": "e6d5455959f63761f8074af47d16ec72",
+    "semantic_hash": "e6d5455959f63761f8074af47d16ec72"
+  },
+  "perflo_docs/agents__troubleshooting.md": {
+    "mtime": 1787852457.2063363,
+    "seen": 1787853275.703893,
+    "ast_hash": "ce049b7d8d7604288edb10ee64d36e2b",
+    "semantic_hash": "ce049b7d8d7604288edb10ee64d36e2b"
+  },
+  "perflo_docs/api-reference__accounts__list-deposit-accounts.md": {
+    "mtime": 1787852457.20692,
+    "seen": 1787853275.703893,
+    "ast_hash": "dc102ce68ad7fe300d9c3bffb5018a1a",
+    "semantic_hash": "dc102ce68ad7fe300d9c3bffb5018a1a"
+  },
+  "perflo_docs/api-reference__accounts__read-the-display-currency-and-rate.md": {
+    "mtime": 1787852457.2073753,
+    "seen": 1787853275.703894,
+    "ast_hash": "1901e2d14386c351b4b47ba6e6f9f695",
+    "semantic_hash": "1901e2d14386c351b4b47ba6e6f9f695"
+  },
+  "perflo_docs/api-reference__activity__list-account-activity.md": {
+    "mtime": 1787852457.2078967,
+    "seen": 1787853275.703895,
+    "ast_hash": "4fc198c8bc6d55f99b8dd3c5aac352cb",
+    "semantic_hash": "4fc198c8bc6d55f99b8dd3c5aac352cb"
+  },
+  "perflo_docs/api-reference__beneficiaries__create-a-beneficiary.md": {
+    "mtime": 1787852457.208399,
+    "seen": 1787853275.703895,
+    "ast_hash": "c3a721032946930d6e81e41dd84812f9",
+    "semantic_hash": "c3a721032946930d6e81e41dd84812f9"
+  },
+  "perflo_docs/api-reference__beneficiaries__find-a-beneficiary-by-nickname.md": {
+    "mtime": 1787852457.208901,
+    "seen": 1787853275.703896,
+    "ast_hash": "a244778f1383b133f298a44be787f813",
+    "semantic_hash": "a244778f1383b133f298a44be787f813"
+  },
+  "perflo_docs/api-reference__beneficiaries__list-beneficiaries.md": {
+    "mtime": 1787852457.2094514,
+    "seen": 1787853275.703897,
+    "ast_hash": "9873f17cbf78395315c2e87add9556f5",
+    "semantic_hash": "9873f17cbf78395315c2e87add9556f5"
+  },
+  "perflo_docs/api-reference__beneficiaries__list-beneficiary-address-countries.md": {
+    "mtime": 1787852457.2099032,
+    "seen": 1787853275.703897,
+    "ast_hash": "344fb61b21619f3dfd51c955de4719ac",
+    "semantic_hash": "344fb61b21619f3dfd51c955de4719ac"
+  },
+  "perflo_docs/api-reference__beneficiaries__list-payout-countries.md": {
+    "mtime": 1787852457.2104435,
+    "seen": 1787853275.7038982,
+    "ast_hash": "0cc9253f2c05eb3da7f873341ee81e23",
+    "semantic_hash": "0cc9253f2c05eb3da7f873341ee81e23"
+  },
+  "perflo_docs/api-reference__beneficiaries__list-payout-schemas.md": {
+    "mtime": 1787852457.2111845,
+    "seen": 1787853275.703899,
+    "ast_hash": "8acebb76ce3e91ae7b036eac0d4ba2ef",
+    "semantic_hash": "8acebb76ce3e91ae7b036eac0d4ba2ef"
+  },
+  "perflo_docs/api-reference__beneficiaries__read-a-beneficiary.md": {
+    "mtime": 1787852457.2117763,
+    "seen": 1787853275.703899,
+    "ast_hash": "07777330a6ef8cd05c8bfc7bb36c38a9",
+    "semantic_hash": "07777330a6ef8cd05c8bfc7bb36c38a9"
+  },
+  "perflo_docs/api-reference__beneficiaries__relabel-a-beneficiary.md": {
+    "mtime": 1787852457.212508,
+    "seen": 1787853275.7038999,
+    "ast_hash": "3475ba150e659f5198042a8a5d547c79",
+    "semantic_hash": "3475ba150e659f5198042a8a5d547c79"
+  },
+  "perflo_docs/api-reference__cards__change-a-card-label.md": {
+    "mtime": 1787852457.2131562,
+    "seen": 1787853275.7039008,
+    "ast_hash": "8a91b4f46d6689a05c9fd14faab09876",
+    "semantic_hash": "8a91b4f46d6689a05c9fd14faab09876"
+  },
+  "perflo_docs/api-reference__cards__close-a-card.md": {
+    "mtime": 1787852457.2136416,
+    "seen": 1787853275.703902,
+    "ast_hash": "51df287c0e3200ae84cdbf4bf274cd1d",
+    "semantic_hash": "51df287c0e3200ae84cdbf4bf274cd1d"
+  },
+  "perflo_docs/api-reference__cards__create-a-card.md": {
+    "mtime": 1787852457.2142255,
+    "seen": 1787853275.703902,
+    "ast_hash": "a84bad59f75cb53d470b1c5e796f52f3",
+    "semantic_hash": "a84bad59f75cb53d470b1c5e796f52f3"
+  },
+  "perflo_docs/api-reference__cards__freeze-a-card.md": {
+    "mtime": 1787852457.2147434,
+    "seen": 1787853275.703903,
+    "ast_hash": "c9f059fc7c9e3e731ff4331acbf840fc",
+    "semantic_hash": "c9f059fc7c9e3e731ff4331acbf840fc"
+  },
+  "perflo_docs/api-reference__cards__list-card-account-deposits.md": {
+    "mtime": 1787852457.2152874,
+    "seen": 1787853275.703904,
+    "ast_hash": "b92cd079ac1654b95038f4193535ed1c",
+    "semantic_hash": "b92cd079ac1654b95038f4193535ed1c"
+  },
+  "perflo_docs/api-reference__cards__list-card-account-withdrawals.md": {
+    "mtime": 1787852457.2157207,
+    "seen": 1787853275.703904,
+    "ast_hash": "d052f7643e833c4fb4e9123ccf68c442",
+    "semantic_hash": "d052f7643e833c4fb4e9123ccf68c442"
+  },
+  "perflo_docs/api-reference__cards__list-card-transactions.md": {
+    "mtime": 1787852457.2163224,
+    "seen": 1787853275.703905,
+    "ast_hash": "f3848e41c0d1ae0d27336f438a1947c5",
+    "semantic_hash": "f3848e41c0d1ae0d27336f438a1947c5"
+  },
+  "perflo_docs/api-reference__cards__list-cards.md": {
+    "mtime": 1787852457.2168221,
+    "seen": 1787853275.703906,
+    "ast_hash": "e8d7636a733f024148787b811ea14cf3",
+    "semantic_hash": "e8d7636a733f024148787b811ea14cf3"
+  },
+  "perflo_docs/api-reference__cards__read-a-card.md": {
+    "mtime": 1787852457.2172687,
+    "seen": 1787853275.703906,
+    "ast_hash": "d3aacb29f77484caf138ddb1300191d2",
+    "semantic_hash": "d3aacb29f77484caf138ddb1300191d2"
+  },
+  "perflo_docs/api-reference__cards__read-card-verification.md": {
+    "mtime": 1787852457.218172,
+    "seen": 1787853275.703907,
+    "ast_hash": "f289c8d4bb407fc4025092caab006f5d",
+    "semantic_hash": "f289c8d4bb407fc4025092caab006f5d"
+  },
+  "perflo_docs/api-reference__cards__read-the-card-account.md": {
+    "mtime": 1787852457.2187076,
+    "seen": 1787853275.7039082,
+    "ast_hash": "5ba7e7664aa80e885554b2558f342292",
+    "semantic_hash": "5ba7e7664aa80e885554b2558f342292"
+  },
+  "perflo_docs/api-reference__cards__read-the-card-funding-address.md": {
+    "mtime": 1787852457.219314,
+    "seen": 1787853275.7039082,
+    "ast_hash": "6c52dac4f4604d0c4ed8ae0cb675fb7c",
+    "semantic_hash": "6c52dac4f4604d0c4ed8ae0cb675fb7c"
+  },
+  "perflo_docs/api-reference__cards__start-a-card-reveal-session.md": {
+    "mtime": 1787852457.2198286,
+    "seen": 1787853275.7039092,
+    "ast_hash": "8642e061a9693c6e605e72604abdf114",
+    "semantic_hash": "8642e061a9693c6e605e72604abdf114"
+  },
+  "perflo_docs/api-reference__cards__start-card-verification.md": {
+    "mtime": 1787852457.220419,
+    "seen": 1787853275.7039092,
+    "ast_hash": "142532521b600c0d6c1c67b5b3a5f11a",
+    "semantic_hash": "142532521b600c0d6c1c67b5b3a5f11a"
+  },
+  "perflo_docs/api-reference__cards__unfreeze-a-card.md": {
+    "mtime": 1787852457.2208245,
+    "seen": 1787853275.7039099,
+    "ast_hash": "53a8ab191f9f19bdd9b128c63cd6975b",
+    "semantic_hash": "53a8ab191f9f19bdd9b128c63cd6975b"
+  },
+  "perflo_docs/api-reference__cards__withdraw-card-account-funds.md": {
+    "mtime": 1787852457.2212791,
+    "seen": 1787853275.7039108,
+    "ast_hash": "b1e877b53e0eae727ec7030fdd0d7f70",
+    "semantic_hash": "b1e877b53e0eae727ec7030fdd0d7f70"
+  },
+  "perflo_docs/api-reference__identity__create-a-confirmation-intent.md": {
+    "mtime": 1787852457.2218134,
+    "seen": 1787853275.7039108,
+    "ast_hash": "ed4ddf2e992bc4de216dd222780c82bb",
+    "semantic_hash": "ed4ddf2e992bc4de216dd222780c82bb"
+  },
+  "perflo_docs/api-reference__identity__read-sign-in-branding.md": {
+    "mtime": 1787852457.2222376,
+    "seen": 1787853275.703912,
+    "ast_hash": "8e06d711ba9c74376c1b3daf1a7720aa",
+    "semantic_hash": "8e06d711ba9c74376c1b3daf1a7720aa"
+  },
+  "perflo_docs/api-reference__identity__read-the-callers-verified-identity.md": {
+    "mtime": 1787852457.2227046,
+    "seen": 1787853275.703913,
+    "ast_hash": "2b4cc28808dfe2d06ec46fa43bff9dc6",
+    "semantic_hash": "2b4cc28808dfe2d06ec46fa43bff9dc6"
+  },
+  "perflo_docs/api-reference__kyc__read-verification-status.md": {
+    "mtime": 1787852457.2232175,
+    "seen": 1787853275.703914,
+    "ast_hash": "68e92f3da3ba4dc9b8a57cae759712b6",
+    "semantic_hash": "68e92f3da3ba4dc9b8a57cae759712b6"
+  },
+  "perflo_docs/api-reference__kyc__start-a-verification-session.md": {
+    "mtime": 1787852457.2236526,
+    "seen": 1787853275.703914,
+    "ast_hash": "f70bb28e713fb276bfd998718f67f33a",
+    "semantic_hash": "f70bb28e713fb276bfd998718f67f33a"
+  },
+  "perflo_docs/api-reference__mandates__create-a-mandate.md": {
+    "mtime": 1787852457.2242184,
+    "seen": 1787853275.703915,
+    "ast_hash": "21db6f8ff92fcf803d3d60569e39ef79",
+    "semantic_hash": "21db6f8ff92fcf803d3d60569e39ef79"
+  },
+  "perflo_docs/api-reference__mandates__execute-a-mandate-payment.md": {
+    "mtime": 1787852457.2246754,
+    "seen": 1787853275.703916,
+    "ast_hash": "8c2c41b7747bd50517afd4c1cbe09022",
+    "semantic_hash": "8c2c41b7747bd50517afd4c1cbe09022"
+  },
+  "perflo_docs/api-reference__mandates__list-beneficiary-grants.md": {
+    "mtime": 1787852457.2251232,
+    "seen": 1787853275.703917,
+    "ast_hash": "92893cdc8235bdcbe7e6746788382873",
+    "semantic_hash": "92893cdc8235bdcbe7e6746788382873"
+  },
+  "perflo_docs/api-reference__mandates__list-mandates.md": {
+    "mtime": 1787852457.2269099,
+    "seen": 1787853275.703917,
+    "ast_hash": "4593640d0bc893191da886671d4fad2e",
+    "semantic_hash": "4593640d0bc893191da886671d4fad2e"
+  },
+  "perflo_docs/api-reference__mandates__mint-a-connect-code.md": {
+    "mtime": 1787852457.2273889,
+    "seen": 1787853275.703918,
+    "ast_hash": "d7214c38e147282c331ab81affa884df",
+    "semantic_hash": "d7214c38e147282c331ab81affa884df"
+  },
+  "perflo_docs/api-reference__mandates__read-a-mandate.md": {
+    "mtime": 1787852457.2278235,
+    "seen": 1787853275.7039192,
+    "ast_hash": "51e615bb899c6cc3574f744befa49ada",
+    "semantic_hash": "51e615bb899c6cc3574f744befa49ada"
+  },
+  "perflo_docs/api-reference__mandates__redeem-a-connect-code.md": {
+    "mtime": 1787852457.228391,
+    "seen": 1787853275.7039192,
+    "ast_hash": "f143b4df9d47e4b87fdec2e0b4804db5",
+    "semantic_hash": "f143b4df9d47e4b87fdec2e0b4804db5"
+  },
+  "perflo_docs/api-reference__mandates__refresh-a-paired-agent-token.md": {
+    "mtime": 1787852457.228836,
+    "seen": 1787853275.7039201,
+    "ast_hash": "ce025e7477e77ce601245f95298dd1ea",
+    "semantic_hash": "ce025e7477e77ce601245f95298dd1ea"
+  },
+  "perflo_docs/api-reference__mandates__revoke-a-beneficiary-grant.md": {
+    "mtime": 1787852457.2293682,
+    "seen": 1787853275.7039208,
+    "ast_hash": "4b2f3d218039020e04cbc9f9bd8e4a53",
+    "semantic_hash": "4b2f3d218039020e04cbc9f9bd8e4a53"
+  },
+  "perflo_docs/api-reference__mandates__revoke-a-mandate.md": {
+    "mtime": 1787852457.2298744,
+    "seen": 1787853275.7039208,
+    "ast_hash": "1c6c7b83ad8d3e4a84f521d40b9eba1c",
+    "semantic_hash": "1c6c7b83ad8d3e4a84f521d40b9eba1c"
+  },
+  "perflo_docs/api-reference__mandates__revoke-an-agent-pairing.md": {
+    "mtime": 1787852457.2303236,
+    "seen": 1787853275.703922,
+    "ast_hash": "329fb6856ff4c1240cef8b6cb1deaf56",
+    "semantic_hash": "329fb6856ff4c1240cef8b6cb1deaf56"
+  },
+  "perflo_docs/api-reference__mandates__revoke-every-agents-authority.md": {
+    "mtime": 1787852457.2438676,
+    "seen": 1787853275.703923,
+    "ast_hash": "01ecc7fc5a8a9862c5d321eaee578b15",
+    "semantic_hash": "01ecc7fc5a8a9862c5d321eaee578b15"
+  },
+  "perflo_docs/api-reference__mandates__spend-a-beneficiary-grant.md": {
+    "mtime": 1787852457.2444336,
+    "seen": 1787853275.703923,
+    "ast_hash": "c5f69deebda0d247a99165092949e913",
+    "semantic_hash": "c5f69deebda0d247a99165092949e913"
+  },
+  "perflo_docs/api-reference__onboarding__advance-the-perflo-connection.md": {
+    "mtime": 1787852457.2458556,
+    "seen": 1787853275.703924,
+    "ast_hash": "26c4aa0af5b33f6e7b590e0532d8e560",
+    "semantic_hash": "26c4aa0af5b33f6e7b590e0532d8e560"
+  },
+  "perflo_docs/api-reference__onboarding__read-onboarding-state.md": {
+    "mtime": 1787852457.2467897,
+    "seen": 1787853275.703925,
+    "ast_hash": "43c67a4affc91b899811cb6c1d2f88ef",
+    "semantic_hash": "43c67a4affc91b899811cb6c1d2f88ef"
+  },
+  "perflo_docs/api-reference__onboarding__remove-the-perflo-connection.md": {
+    "mtime": 1787852457.2475302,
+    "seen": 1787853275.703926,
+    "ast_hash": "27050d5b509bb9c2a3964b256b58b940",
+    "semantic_hash": "27050d5b509bb9c2a3964b256b58b940"
+  },
+  "perflo_docs/api-reference__onboarding__start-a-perflo-connection.md": {
+    "mtime": 1787852457.2481058,
+    "seen": 1787853275.703926,
+    "ast_hash": "522b4a0bbacb28d85b1dc7bf873bb1e6",
+    "semantic_hash": "522b4a0bbacb28d85b1dc7bf873bb1e6"
+  },
+  "perflo_docs/api-reference__operations__list-operations.md": {
+    "mtime": 1787852457.2498991,
+    "seen": 1787853275.703927,
+    "ast_hash": "51663401cba26a6b6d4efa22032a7abf",
+    "semantic_hash": "51663401cba26a6b6d4efa22032a7abf"
+  },
+  "perflo_docs/api-reference__operations__poll-an-operation-approval.md": {
+    "mtime": 1787852457.2512033,
+    "seen": 1787853275.703927,
+    "ast_hash": "a23a4a026f1ddefab091667cb1b6e16c",
+    "semantic_hash": "a23a4a026f1ddefab091667cb1b6e16c"
+  },
+  "perflo_docs/api-reference__operations__read-an-operation.md": {
+    "mtime": 1787852457.254045,
+    "seen": 1787853275.703928,
+    "ast_hash": "6ed1c77b5ef44021b040e9c19f786cf6",
+    "semantic_hash": "6ed1c77b5ef44021b040e9c19f786cf6"
+  },
+  "perflo_docs/api-reference__operations__resolve-a-stuck-operation-approval.md": {
+    "mtime": 1787852457.254686,
+    "seen": 1787853275.7039292,
+    "ast_hash": "5afd431fadb61c9cdbaa6c4240031680",
+    "semantic_hash": "5afd431fadb61c9cdbaa6c4240031680"
+  },
+  "perflo_docs/api-reference__perflo-device-tokens__list-the-customers-perflo-devices.md": {
+    "mtime": 1787852457.2555723,
+    "seen": 1787853275.7039292,
+    "ast_hash": "9a20739ed9bcb45042596aaf1c05854a",
+    "semantic_hash": "9a20739ed9bcb45042596aaf1c05854a"
+  },
+  "perflo_docs/api-reference__perflo-device-tokens__poll-a-perflo-cli-signing-approval.md": {
+    "mtime": 1787852457.2564309,
+    "seen": 1787853275.7039301,
+    "ast_hash": "18cab81825da292794cf325123486446",
+    "semantic_hash": "18cab81825da292794cf325123486446"
+  },
+  "perflo_docs/api-reference__perflo-device-tokens__poll-perflo-device-authentication.md": {
+    "mtime": 1787852457.2570395,
+    "seen": 1787853275.7039309,
+    "ast_hash": "65d4505759cc5906848c268f4b33d0ed",
+    "semantic_hash": "65d4505759cc5906848c268f4b33d0ed"
+  },
+  "perflo_docs/api-reference__perflo-device-tokens__refresh-a-perflo-access-token.md": {
+    "mtime": 1787852457.2583578,
+    "seen": 1787853275.703936,
+    "ast_hash": "d6ed9341a88f2294bcf83fc386036487",
+    "semantic_hash": "d6ed9341a88f2294bcf83fc386036487"
+  },
+  "perflo_docs/api-reference__perflo-device-tokens__revoke-a-perflo-token.md": {
+    "mtime": 1787852457.2589598,
+    "seen": 1787853275.703937,
+    "ast_hash": "1eb852643c1ec5ddf934f0f1163e1c82",
+    "semantic_hash": "1eb852643c1ec5ddf934f0f1163e1c82"
+  },
+  "perflo_docs/api-reference__perflo-device-tokens__start-a-perflo-cli-signing-approval.md": {
+    "mtime": 1787852457.2602973,
+    "seen": 1787853275.703938,
+    "ast_hash": "a4b333c992439b93adae73fa0eed287c",
+    "semantic_hash": "a4b333c992439b93adae73fa0eed287c"
+  },
+  "perflo_docs/api-reference__perflo-device-tokens__start-perflo-device-authentication.md": {
+    "mtime": 1787852457.264089,
+    "seen": 1787853275.703939,
+    "ast_hash": "84decf53997b061a9eaff721d4cfad8f",
+    "semantic_hash": "84decf53997b061a9eaff721d4cfad8f"
+  },
+  "perflo_docs/api-reference__services__buy-a-service.md": {
+    "mtime": 1787852457.2653072,
+    "seen": 1787853275.703939,
+    "ast_hash": "11320427b02aab0b761d8d619e526778",
+    "semantic_hash": "11320427b02aab0b761d8d619e526778"
+  },
+  "perflo_docs/api-reference__services__find-service-capabilities.md": {
+    "mtime": 1787852457.2658467,
+    "seen": 1787853275.7039402,
+    "ast_hash": "b8d8942de7fbc04fa5406faaf862e55a",
+    "semantic_hash": "b8d8942de7fbc04fa5406faaf862e55a"
+  },
+  "perflo_docs/api-reference__services__list-purchasable-services.md": {
+    "mtime": 1787852457.2664402,
+    "seen": 1787853275.703941,
+    "ast_hash": "2f99bd85df92e2f77789a9d092a7e6d7",
+    "semantic_hash": "2f99bd85df92e2f77789a9d092a7e6d7"
+  },
+  "perflo_docs/api-reference__services__list-service-purchases.md": {
+    "mtime": 1787852457.2668695,
+    "seen": 1787853275.7039418,
+    "ast_hash": "9bd0646ba0b59aee7bf0065c37fee272",
+    "semantic_hash": "9bd0646ba0b59aee7bf0065c37fee272"
+  },
+  "perflo_docs/api-reference__services__price-a-service-purchase.md": {
+    "mtime": 1787852457.2673469,
+    "seen": 1787853275.703943,
+    "ast_hash": "ef0e7bd4c2cb1fcd8d92ed88e0b674bf",
+    "semantic_hash": "ef0e7bd4c2cb1fcd8d92ed88e0b674bf"
+  },
+  "perflo_docs/api-reference__services__read-a-purchasable-service.md": {
+    "mtime": 1787852457.2677872,
+    "seen": 1787853275.703944,
+    "ast_hash": "9190f41ba7c800779cbce794a7d30273",
+    "semantic_hash": "9190f41ba7c800779cbce794a7d30273"
+  },
+  "perflo_docs/api-reference__services__read-a-service-purchase.md": {
+    "mtime": 1787852457.2682602,
+    "seen": 1787853275.703944,
+    "ast_hash": "b362d7463c25357bfedce246e052d961",
+    "semantic_hash": "b362d7463c25357bfedce246e052d961"
+  },
+  "perflo_docs/api-reference__spending__read-a-spending-withdrawal.md": {
+    "mtime": 1787852457.2686956,
+    "seen": 1787853275.703945,
+    "ast_hash": "5f8317b225e2da0fb79a07cdb2b14f7c",
+    "semantic_hash": "5f8317b225e2da0fb79a07cdb2b14f7c"
+  },
+  "perflo_docs/api-reference__spending__read-the-spending-account.md": {
+    "mtime": 1787852457.2691462,
+    "seen": 1787853275.703947,
+    "ast_hash": "40a780ed79d6198697c7bad7dc91f366",
+    "semantic_hash": "40a780ed79d6198697c7bad7dc91f366"
+  },
+  "perflo_docs/api-reference__spending__withdraw-held-spending-funds.md": {
+    "mtime": 1787852457.269616,
+    "seen": 1787853275.703948,
+    "ast_hash": "4bffab5d1ff69b2bb9da3ea5c2131d21",
+    "semantic_hash": "4bffab5d1ff69b2bb9da3ea5c2131d21"
+  },
+  "perflo_docs/api-reference__transfers__create-a-transfer-quote.md": {
+    "mtime": 1787852457.2700658,
+    "seen": 1787853275.703949,
+    "ast_hash": "c0af7b9329cfd121b3e2202049ddb14b",
+    "semantic_hash": "c0af7b9329cfd121b3e2202049ddb14b"
+  },
+  "perflo_docs/api-reference__transfers__send-a-transfer.md": {
+    "mtime": 1787852457.2706292,
+    "seen": 1787853275.7039502,
+    "ast_hash": "4dcae191c0580061388cd562ac91c548",
+    "semantic_hash": "4dcae191c0580061388cd562ac91c548"
+  },
+  "perflo_docs/api-reference__webhooks__create-a-webhook-subscription.md": {
+    "mtime": 1787852457.2713845,
+    "seen": 1787853275.7039511,
+    "ast_hash": "372b609fd2d25bb1833f911bb788b7d7",
+    "semantic_hash": "372b609fd2d25bb1833f911bb788b7d7"
+  },
+  "perflo_docs/api-reference__webhooks__delete-a-webhook-subscription.md": {
+    "mtime": 1787852457.271825,
+    "seen": 1787853275.7039511,
+    "ast_hash": "f0f7b88c1fc4a8649a7d1517ed78d44d",
+    "semantic_hash": "f0f7b88c1fc4a8649a7d1517ed78d44d"
+  },
+  "perflo_docs/api-reference__webhooks__list-webhook-subscriptions.md": {
+    "mtime": 1787852457.2722144,
+    "seen": 1787853275.7039518,
+    "ast_hash": "0efb1c3b8109107d48543ef7913a1c53",
+    "semantic_hash": "0efb1c3b8109107d48543ef7913a1c53"
+  },
+  "perflo_docs/cards-banking__bank-accounts.md": {
+    "mtime": 1787852457.2726448,
+    "seen": 1787853275.7039528,
+    "ast_hash": "fd23eea8940b6b6d68f500f8c6d5da5b",
+    "semantic_hash": "fd23eea8940b6b6d68f500f8c6d5da5b"
+  },
+  "perflo_docs/cards-banking__payouts-and-transfers.md": {
+    "mtime": 1787852457.2730517,
+    "seen": 1787853275.703956,
+    "ast_hash": "a744d1e99207918f237c95228ee6c66c",
+    "semantic_hash": "a744d1e99207918f237c95228ee6c66c"
+  },
+  "perflo_docs/cards-banking__troubleshooting.md": {
+    "mtime": 1787852457.273444,
+    "seen": 1787853275.703957,
+    "ast_hash": "937b24ca6c4f8beee28bffc66c8165e1",
+    "semantic_hash": "937b24ca6c4f8beee28bffc66c8165e1"
+  },
+  "perflo_docs/cards-banking__virtual-cards.md": {
+    "mtime": 1787852457.2737966,
+    "seen": 1787853275.703958,
+    "ast_hash": "0e67b340daab2edc42fbde733bcf8ee7",
+    "semantic_hash": "0e67b340daab2edc42fbde733bcf8ee7"
+  },
+  "perflo_docs/changelog.md": {
+    "mtime": 1787852457.27427,
+    "seen": 1787853275.703959,
+    "ast_hash": "9552b71d15297f4aa9212bdd81e1ac1b",
+    "semantic_hash": "9552b71d15297f4aa9212bdd81e1ac1b"
+  },
+  "perflo_docs/concepts__fees-and-limits.md": {
+    "mtime": 1787852457.274628,
+    "seen": 1787853275.703959,
+    "ast_hash": "812f1b246ae9d1fddd3fb726829d9a63",
+    "semantic_hash": "812f1b246ae9d1fddd3fb726829d9a63"
+  },
+  "perflo_docs/concepts__guardrails.md": {
+    "mtime": 1787852457.2751088,
+    "seen": 1787853275.7039602,
+    "ast_hash": "fdda8549374ca94e70e2c9944f4e1ce5",
+    "semantic_hash": "fdda8549374ca94e70e2c9944f4e1ce5"
+  },
+  "perflo_docs/concepts__how-perflo-works.md": {
+    "mtime": 1787852457.2755013,
+    "seen": 1787853275.7039611,
+    "ast_hash": "c39775a363ba4dad7d7fa7db53113275",
+    "semantic_hash": "c39775a363ba4dad7d7fa7db53113275"
+  },
+  "perflo_docs/developers__concepts__authentication.md": {
+    "mtime": 1787852457.275897,
+    "seen": 1787853275.703962,
+    "ast_hash": "657856292ea800373a8c70d30ea7fdc1",
+    "semantic_hash": "657856292ea800373a8c70d30ea7fdc1"
+  },
+  "perflo_docs/developers__concepts__confirmation-idempotency.md": {
+    "mtime": 1787852457.2762547,
+    "seen": 1787853275.703962,
+    "ast_hash": "e31fa72e56518c5b27486ed82a521569",
+    "semantic_hash": "e31fa72e56518c5b27486ed82a521569"
+  },
+  "perflo_docs/developers__concepts__identity.md": {
+    "mtime": 1787852457.2766266,
+    "seen": 1787853275.7039628,
+    "ast_hash": "4d724fcb5583f0868402f5b40aca0681",
+    "semantic_hash": "4d724fcb5583f0868402f5b40aca0681"
+  },
+  "perflo_docs/developers__concepts__operations-errors.md": {
+    "mtime": 1787852457.2771385,
+    "seen": 1787853275.703964,
+    "ast_hash": "bc2353177c2cdcdfdf5f87e090d22059",
+    "semantic_hash": "bc2353177c2cdcdfdf5f87e090d22059"
+  },
+  "perflo_docs/developers__get-started__authorize-device.md": {
+    "mtime": 1787852457.2775364,
+    "seen": 1787853275.703965,
+    "ast_hash": "586dd74f40138cdb9554e4a539717249",
+    "semantic_hash": "586dd74f40138cdb9554e4a539717249"
+  },
+  "perflo_docs/developers__get-started__connect-perflo.md": {
+    "mtime": 1787852457.2779589,
+    "seen": 1787853275.703965,
+    "ast_hash": "16d01664648ed93685fc28d6f124d5ba",
+    "semantic_hash": "16d01664648ed93685fc28d6f124d5ba"
+  },
+  "perflo_docs/developers__get-started__live-api-exercise.md": {
+    "mtime": 1787852457.2784114,
+    "seen": 1787853275.703966,
+    "ast_hash": "c91cc4e6ae9fea9e67dab688fa0e1e93",
+    "semantic_hash": "c91cc4e6ae9fea9e67dab688fa0e1e93"
+  },
+  "perflo_docs/developers__get-started__quickstart.md": {
+    "mtime": 1787852457.2788868,
+    "seen": 1787853275.703967,
+    "ast_hash": "0505c1354c367ada52247197feae6c32",
+    "semantic_hash": "0505c1354c367ada52247197feae6c32"
+  },
+  "perflo_docs/developers__get-started__typescript-sdk.md": {
+    "mtime": 1787852457.2793772,
+    "seen": 1787853275.703968,
+    "ast_hash": "229d1e0a08f7e1f53744b163eeab2d72",
+    "semantic_hash": "229d1e0a08f7e1f53744b163eeab2d72"
+  },
+  "perflo_docs/developers__guides__accounts-kyc.md": {
+    "mtime": 1787852457.2798295,
+    "seen": 1787853275.703969,
+    "ast_hash": "0f700cd14a8cadab1e5877fc40493185",
+    "semantic_hash": "0f700cd14a8cadab1e5877fc40493185"
+  },
+  "perflo_docs/developers__guides__agent-mandates.md": {
+    "mtime": 1787852457.2802334,
+    "seen": 1787853275.703969,
+    "ast_hash": "9eacdc7efecc3135dc8aace6a8b475a2",
+    "semantic_hash": "9eacdc7efecc3135dc8aace6a8b475a2"
+  },
+  "perflo_docs/developers__guides__beneficiaries-transfers.md": {
+    "mtime": 1787852457.280666,
+    "seen": 1787853275.70397,
+    "ast_hash": "85213379526d01eccab92c9ad41d87de",
+    "semantic_hash": "85213379526d01eccab92c9ad41d87de"
+  },
+  "perflo_docs/developers__guides__cards.md": {
+    "mtime": 1787852457.2811313,
+    "seen": 1787853275.7039711,
+    "ast_hash": "f48a992cb71d74ea0371492e5ee73849",
+    "semantic_hash": "f48a992cb71d74ea0371492e5ee73849"
+  },
+  "perflo_docs/developers__guides__service-purchases.md": {
+    "mtime": 1787852457.2815785,
+    "seen": 1787853275.703972,
+    "ast_hash": "6ff715f7df4a454fc3ed1398d23a8af0",
+    "semantic_hash": "6ff715f7df4a454fc3ed1398d23a8af0"
+  },
+  "perflo_docs/developers__guides__spending.md": {
+    "mtime": 1787852457.2820191,
+    "seen": 1787853275.703973,
+    "ast_hash": "d534aeb7c0589b00f79611c238107d31",
+    "semantic_hash": "d534aeb7c0589b00f79611c238107d31"
+  },
+  "perflo_docs/developers__guides__webhooks.md": {
+    "mtime": 1787852457.2824597,
+    "seen": 1787853275.703973,
+    "ast_hash": "16f87e148e705601d4d3de0d3d6cb73b",
+    "semantic_hash": "16f87e148e705601d4d3de0d3d6cb73b"
+  },
+  "perflo_docs/developers__overview.md": {
+    "mtime": 1787852457.2829013,
+    "seen": 1787853275.7039738,
+    "ast_hash": "85c7704c8e1d9b563a5242c82bbf228c",
+    "semantic_hash": "85c7704c8e1d9b563a5242c82bbf228c"
+  },
+  "perflo_docs/developers__partner-wallets__authentication.md": {
+    "mtime": 1787852457.283346,
+    "seen": 1787853275.703975,
+    "ast_hash": "a472a50a315e259d88c68db7475705d3",
+    "semantic_hash": "a472a50a315e259d88c68db7475705d3"
+  },
+  "perflo_docs/developers__partner-wallets__overview.md": {
+    "mtime": 1787852457.2837915,
+    "seen": 1787853275.703975,
+    "ast_hash": "2afc47b6fd6242a0149a8ee9c8f010af",
+    "semantic_hash": "2afc47b6fd6242a0149a8ee9c8f010af"
+  },
+  "perflo_docs/developers__partner-wallets__provisioning.md": {
+    "mtime": 1787852457.2843254,
+    "seen": 1787853275.703976,
+    "ast_hash": "9c5f29333ef7aa430c0bcf3da2b55cb3",
+    "semantic_hash": "9c5f29333ef7aa430c0bcf3da2b55cb3"
+  },
+  "perflo_docs/developers__partner-wallets__reference.md": {
+    "mtime": 1787852457.2849786,
+    "seen": 1787853275.7039769,
+    "ast_hash": "906661860e9bcede436595d88e84112e",
+    "semantic_hash": "906661860e9bcede436595d88e84112e"
+  },
+  "perflo_docs/developers__partner-wallets__sign-messages.md": {
+    "mtime": 1787852457.2854943,
+    "seen": 1787853275.7039769,
+    "ast_hash": "087fe37cc20f3c9bed97e51f70f858ba",
+    "semantic_hash": "087fe37cc20f3c9bed97e51f70f858ba"
+  },
+  "perflo_docs/developers__reference__currencies.md": {
+    "mtime": 1787852457.2859306,
+    "seen": 1787853275.703978,
+    "ast_hash": "564115c199c4432094c5d2130cdb13b4",
+    "semantic_hash": "564115c199c4432094c5d2130cdb13b4"
+  },
+  "perflo_docs/developers__reference__glossary.md": {
+    "mtime": 1787852457.2864585,
+    "seen": 1787853275.703978,
+    "ast_hash": "cbd69cd074bc384e9f56c855138c0c02",
+    "semantic_hash": "cbd69cd074bc384e9f56c855138c0c02"
+  },
+  "perflo_docs/developers__reference__typescript-sdk.md": {
+    "mtime": 1787852457.2870536,
+    "seen": 1787853275.703979,
+    "ast_hash": "d52b90dabbd07567893cec83f19cccee",
+    "semantic_hash": "d52b90dabbd07567893cec83f19cccee"
+  },
+  "perflo_docs/getting-started__create-account.md": {
+    "mtime": 1787852457.2876012,
+    "seen": 1787853275.70398,
+    "ast_hash": "b4d6b34cb0ded824b927fda76278b723",
+    "semantic_hash": "b4d6b34cb0ded824b927fda76278b723"
+  },
+  "perflo_docs/getting-started__fund-your-account.md": {
+    "mtime": 1787852457.288053,
+    "seen": 1787853275.70398,
+    "ast_hash": "33eb67cb1855a85dc46cf8079da30182",
+    "semantic_hash": "33eb67cb1855a85dc46cf8079da30182"
+  },
+  "perflo_docs/getting-started__troubleshooting.md": {
+    "mtime": 1787852457.288808,
+    "seen": 1787853275.7039812,
+    "ast_hash": "d87626597e1f4b9ed497ee5c8c584fa7",
+    "semantic_hash": "d87626597e1f4b9ed497ee5c8c584fa7"
+  },
+  "perflo_docs/getting-started__verify-identity.md": {
+    "mtime": 1787852457.2892363,
+    "seen": 1787853275.703982,
+    "ast_hash": "393037d8e9e6221b624cec4b2de2449b",
+    "semantic_hash": "393037d8e9e6221b624cec4b2de2449b"
+  },
+  "perflo_docs/introduction.md": {
+    "mtime": 1787852457.2898598,
+    "seen": 1787853275.703982,
+    "ast_hash": "c017f2a916c524beaffc9f07ec0c32b3",
+    "semantic_hash": "c017f2a916c524beaffc9f07ec0c32b3"
+  },
+  "perflo_docs/llms.txt": {
+    "mtime": 1787852457.2904122,
+    "seen": 1787853275.703983,
+    "ast_hash": "ec5fb57e2afb2f0c4d2e19af29e8fe4c",
+    "semantic_hash": "ec5fb57e2afb2f0c4d2e19af29e8fe4c"
+  },
+  "perflo_docs/money__assets.md": {
+    "mtime": 1787852457.2908194,
+    "seen": 1787853275.703984,
+    "ast_hash": "ba3dcaf126b9d76e2668ed47fc63d667",
+    "semantic_hash": "ba3dcaf126b9d76e2668ed47fc63d667"
+  },
+  "perflo_docs/money__borrow.md": {
+    "mtime": 1787852457.291225,
+    "seen": 1787853275.703984,
+    "ast_hash": "97d9076a45a6f7ea81d3361d0a56e01b",
+    "semantic_hash": "97d9076a45a6f7ea81d3361d0a56e01b"
+  },
+  "perflo_docs/money__cash.md": {
+    "mtime": 1787852457.2916386,
+    "seen": 1787853275.703985,
+    "ast_hash": "1c35b8c34aaf4149eea90982242b55aa",
+    "semantic_hash": "1c35b8c34aaf4149eea90982242b55aa"
+  },
+  "perflo_docs/money__earn.md": {
+    "mtime": 1787852457.2920365,
+    "seen": 1787853275.703986,
+    "ast_hash": "caf5a12c398fc1bea60b3d0c0ec2f3fc",
+    "semantic_hash": "caf5a12c398fc1bea60b3d0c0ec2f3fc"
+  },
+  "perflo_docs/quickstart.md": {
+    "mtime": 1787852457.2924325,
+    "seen": 1787853275.703986,
+    "ast_hash": "1319af16a32d995410d2a2a0a74a08d1",
+    "semantic_hash": "1319af16a32d995410d2a2a0a74a08d1"
+  },
+  "perflo_docs/reference__faq.md": {
+    "mtime": 1787852457.2928865,
+    "seen": 1787853275.703987,
+    "ast_hash": "ecdae0185d9c64a83c68662165f272ae",
+    "semantic_hash": "ecdae0185d9c64a83c68662165f272ae"
+  },
+  "perflo_docs/reference__networks-and-contracts.md": {
+    "mtime": 1787852457.293334,
+    "seen": 1787853275.703989,
+    "ast_hash": "5bf818499377718f30ea4fbd2067e436",
+    "semantic_hash": "5bf818499377718f30ea4fbd2067e436"
+  },
+  "perflo_docs/reference__security.md": {
+    "mtime": 1787852457.2937438,
+    "seen": 1787853275.703989,
+    "ast_hash": "02477d4c5972786eb27f30ad1e2b1ac6",
+    "semantic_hash": "02477d4c5972786eb27f30ad1e2b1ac6"
+  },
+  "perflo_docs/reference__supported-currencies.md": {
+    "mtime": 1787852457.294192,
+    "seen": 1787853275.70399,
+    "ast_hash": "e86110f50b44a9e9a4cac695810392cd",
+    "semantic_hash": "e86110f50b44a9e9a4cac695810392cd"
+  },
+  "perflo_docs/trading__futures.md": {
+    "mtime": 1787852457.2945905,
+    "seen": 1787853275.703991,
+    "ast_hash": "e4b1b279dd3ed38ea8570d2195042750",
+    "semantic_hash": "e4b1b279dd3ed38ea8570d2195042750"
+  },
+  "perflo_docs/trading__predictions.md": {
+    "mtime": 1787852457.2949915,
+    "seen": 1787853275.703991,
+    "ast_hash": "53837b6640bcd7e1930feb3666de7bf2",
+    "semantic_hash": "53837b6640bcd7e1930feb3666de7bf2"
+  }
+}

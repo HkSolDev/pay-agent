@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16-alpine
+    platform: linux/arm64
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: perflo_ap
+    ports:
+      - "5432:5432"
+    volumes:
+      - perflo_ap_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d perflo_ap"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  perflo_ap_pgdata:

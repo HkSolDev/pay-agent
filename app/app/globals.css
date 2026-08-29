@@ -1,0 +1,20 @@
+:root { color-scheme: light; --bg: #f5f6f8; --panel: #fff; --ink: #17202a; --muted: #697586; --line: #e2e6eb; --accent: #216e61; --accent-soft: #e5f2ef; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: Arial, sans-serif; }
+button { font: inherit; }
+.shell { max-width: 1120px; margin: 0 auto; padding: 48px 24px; }
+.topbar, .card-heading, .actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.eyebrow { margin: 0 0 8px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .12em; }
+h1, h2 { margin: 0; letter-spacing: -.03em; } h1 { font-size: 32px; } h2 { font-size: 20px; }
+.actions button { min-height: 40px; padding: 0 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--muted); }
+.actions .pause { background: #fff5e6; border-color: #f0d19f; color: #8b5e16; }
+.notice { display: flex; gap: 10px; margin: 32px 0 16px; padding: 16px; border: 1px solid #c6e3dc; border-radius: 10px; background: var(--accent-soft); color: #245e53; }
+.notice span { color: #47766d; }
+.card { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.card-heading { padding: 22px 24px; border-bottom: 1px solid var(--line); }
+.count, .status { color: var(--muted); font-size: 13px; }
+.table-wrap { overflow-x: auto; } table { width: 100%; border-collapse: collapse; text-align: left; } th, td { padding: 17px 24px; border-bottom: 1px solid var(--line); font-size: 14px; } th { color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; } tbody tr:last-child td { border-bottom: 0; }
+.text-button { border: 0; background: transparent; color: var(--accent); font-weight: 700; }
+button:disabled { cursor: not-allowed; opacity: .72; }
+button:focus-visible { outline: 3px solid #8acdc0; outline-offset: 2px; }
+@media (max-width: 640px) { .shell { padding: 28px 16px; } .topbar { align-items: flex-start; flex-direction: column; } .actions { width: 100%; } .actions button { flex: 1; } .notice { flex-direction: column; } th, td { padding: 14px 16px; } }

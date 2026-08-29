@@ -1,0 +1,53 @@
+// Prisma 7: the connection URL lives in prisma.config.ts now, not here —
+// this schema only declares the SQL dialect and where the client gets generated.
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Phase 0: only the `emails` table. Everything else (payees, grants, payment_intents)
+// waits until domain-modeling has been run on those terms — see CONTEXT.md.
+model Email {
+  id           String   @id @default(cuid())
+
+  // The one uniqueness constraint that makes Ingest safe to run on a loop (FR-2):
+  // re-polling never creates a second row for a message we've already seen.
+  gmailMessageId String @unique @map("gmail_message_id")
+  gmailThreadId  String @map("gmail_thread_id")
+
+  fromAddr   String  @map("from_addr")
+  fromName   String? @map("from_name")
+  replyTo    String? @map("reply_to")
+  returnPath String? @map("return_path")
+  toAddrs    String[] @map("to_addrs")
+
+  date    DateTime
+  subject String?
+  snippet String?
+
+  rawHeaders   Json    @map("raw_headers")
+  bodyText     String? @map("body_text")
+  bodyHtmlHash String? @map("body_html_hash")
+  attachments  Json?
+  links        Json?
+
+  // SPF/DKIM/DMARC — read at Verify time (Section 8.2), captured now while we have the headers.
+  auth Json?
+
+  senderPriorCount Int       @default(0) @map("sender_prior_count")
+  senderFirstSeen  DateTime? @map("sender_first_seen")
+  inOwnerThread    Boolean   @default(false) @map("in_owner_thread")
+
+  // Nullable: Level 0 has no LLM, so nothing classifies these yet (PRD 3.3).
+  classification           String?
+  classificationConfidence Float?  @map("classification_confidence")
+
+  gmailLabels String[] @map("gmail_labels")
+  ingestedAt  DateTime @default(now()) @map("ingested_at")
+
+  @@map("emails")
+}

@@ -1,0 +1,10 @@
+packages:
+  - app
+  - packages/*
+
+ignoredBuiltDependencies:
+  - '@prisma/engines'
+  - esbuild
+  - msgpackr-extract
+  - prisma
+  - workerd
