@@ -6,6 +6,7 @@ import { prisma } from "@perflo-ap-agent/db";
 import { requestManualPayment } from "../../worker/src/manual-pay";
 import { payViaPerfloCli, PerfloUnknownOutcomeError } from "../../worker/src/perflo-cli";
 import { claimPaymentIntent } from "../../worker/src/payment-claim";
+import { validatePaymentInput } from "../../worker/src/validate-payment-input";
 
 export async function preparePayment(formData: FormData) {
   const emailId = String(formData.get("emailId"));
@@ -13,8 +14,11 @@ export async function preparePayment(formData: FormData) {
   const amount = String(formData.get("amount") ?? "").trim();
   const currency = String(formData.get("currency") ?? "INR");
 
-  if (!recipientNickname || !amount) {
-    throw new Error("Recipient nickname and amount are both required.");
+  // Checked here, before any row exists — catches "abc" or "-5" before they
+  // become an avoidable failed Perflo call and a confusing row in the queue.
+  const validation = validatePaymentInput(recipientNickname, amount);
+  if (!validation.ok) {
+    throw new Error(validation.error ?? "Invalid payment details.");
   }
 
   // idempotencyKey is generated once here, at prepare time, and never

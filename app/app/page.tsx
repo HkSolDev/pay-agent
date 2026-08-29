@@ -79,7 +79,14 @@ export default async function QueuePage() {
                                 <input type="hidden" name="emailId" value={email.id} />
                                 <input type="hidden" name="currency" value="INR" />
                                 <input name="recipientNickname" placeholder="recipient nickname" required />
-                                <input name="amount" placeholder="amount" inputMode="decimal" required />
+                                <input
+                                  name="amount"
+                                  placeholder="amount, e.g. 500"
+                                  inputMode="decimal"
+                                  pattern="\d+(\.\d{1,2})?"
+                                  title="A plain positive number, e.g. 500 or 499.50 — no ₹ symbol"
+                                  required
+                                />
                                 <button type="submit" className="text-button">Prepare</button>
                               </form>
                             )}
