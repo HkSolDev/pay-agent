@@ -4,6 +4,8 @@ import { config } from "dotenv";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "./generated/prisma/client";
 
+export type { PaymentIntentStatus } from "./generated/prisma/enums";
+
 // Load the repo-root .env explicitly, not cwd-relative: `next dev` runs with
 // cwd = app/, which has no .env of its own, so the default `dotenv/config`
 // behavior would silently find nothing and DATABASE_URL would be undefined.

@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@perflo-ap-agent/db";
+import type { PaymentIntentStatus } from "@perflo-ap-agent/db";
 import { claimPaymentIntent } from "./payment-claim.js";
 
 // Integration test against the real local Postgres — a mock can't prove the
@@ -8,7 +9,7 @@ import { claimPaymentIntent } from "./payment-claim.js";
 // matched status "pending", so a "failed" row could never be re-claimed and
 // the visible "Retry" button was a silent dead end.
 
-async function makeIntent(emailId: string, status: string) {
+async function makeIntent(emailId: string, status: PaymentIntentStatus) {
   await prisma.paymentIntent.create({
     data: {
       emailId,

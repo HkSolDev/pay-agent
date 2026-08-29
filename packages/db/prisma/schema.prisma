@@ -65,6 +65,19 @@ model IngestCheckpoint {
   @@map("ingest_checkpoint")
 }
 
+// A real enum, not a plain string: three real bugs already happened in this
+// project's history from status being untyped (a WHERE clause silently only
+// covering 2 of 5 states, a switch missing a branch). Postgres itself now
+// rejects an invalid value, and TypeScript can force every consumer to
+// handle every case — see worker/src/payment-status.ts's exhaustive check.
+enum PaymentIntentStatus {
+  pending
+  claimed
+  paid
+  failed
+  unknown_outcome
+}
+
 // Level 0's "locked manual pay": the owner types a recipient nickname and
 // amount once (prepare), then a separate explicit click (confirm) actually
 // pays. One intent per email — a real payee/grant/idempotency-key system
@@ -83,8 +96,10 @@ model PaymentIntent {
   // uses: the key identifies the logical payment, not the attempt).
   idempotencyKey String @unique @map("idempotency_key")
 
-  // pending -> claimed (row-locked, in progress) -> paid | failed
-  status String @default("pending")
+  // pending -> claimed (row-locked, in progress) -> paid | failed | unknown_outcome
+  // failed -> claimed again (owner retry). unknown_outcome never transitions
+  // automatically (FR-27) — only a human, after checking `perflo activity`.
+  status PaymentIntentStatus @default(pending)
 
   paymentReference String?   @map("payment_reference")
   // The actual reason the last attempt didn't reach "paid" — e.g. "Not

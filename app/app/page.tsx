@@ -1,5 +1,5 @@
 import { prisma } from "@perflo-ap-agent/db";
-import { confirmPayment, preparePayment } from "./actions";
+import { PaymentCell } from "./payment-cell";
 
 // Level 0: no classifier exists yet, so every ingested row is just "queued" —
 // there's no auto-paid/needs-approval/quarantined distinction until Level 1
@@ -70,53 +70,7 @@ export default async function QueuePage() {
                       <td>{email.date.toLocaleString()}</td>
                       <td><span className="status">{email.classification ?? "queued"}</span></td>
                       <td>
-                        {email.classification === "ignored" ? (
-                          <span className="status">ignored — not payable</span>
-                        ) : (
-                          <>
-                            {!intent && (
-                              <form action={preparePayment} className="pay-form">
-                                <input type="hidden" name="emailId" value={email.id} />
-                                <input type="hidden" name="currency" value="INR" />
-                                <input name="recipientNickname" placeholder="recipient nickname" required />
-                                <input
-                                  name="amount"
-                                  placeholder="amount, e.g. 500"
-                                  inputMode="decimal"
-                                  pattern="\d+(\.\d{1,2})?"
-                                  title="A plain positive number, e.g. 500 or 499.50 — no ₹ symbol"
-                                  required
-                                />
-                                <button type="submit" className="text-button">Prepare</button>
-                              </form>
-                            )}
-                            {intent?.status === "pending" && (
-                              <form action={confirmPayment.bind(null, email.id)}>
-                                <button type="submit" className="text-button">
-                                  Confirm &amp; pay ₹{intent.amount} to {intent.recipientNickname}
-                                </button>
-                              </form>
-                            )}
-                            {intent?.status === "claimed" && <span className="status">processing…</span>}
-                            {intent?.status === "paid" && (
-                              <span className="status">paid ✓ {intent.paymentReference}</span>
-                            )}
-                            {intent?.status === "failed" && (
-                              <form action={confirmPayment.bind(null, email.id)} className="pay-form">
-                                <span className="status status-warn">{intent.lastError ?? "Failed"}</span>
-                                <button type="submit" className="text-button">Retry</button>
-                              </form>
-                            )}
-                            {/* No retry control on purpose (FR-27): outcome is unknown, may
-                                already be paid — a human must check `perflo activity` first. */}
-                            {intent?.status === "unknown_outcome" && (
-                              <span className="status status-warn">
-                                ⚠ uncertain — check Perflo activity before retrying
-                                {intent.lastError ? ` (${intent.lastError})` : ""}
-                              </span>
-                            )}
-                          </>
-                        )}
+                        <PaymentCell emailId={email.id} classification={email.classification} intent={intent} />
                       </td>
                     </tr>
                   );
