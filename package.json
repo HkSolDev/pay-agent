@@ -24,5 +24,11 @@
     "@perflo-ap-agent/db": "workspace:*",
     "dotenv": "^17.4.2",
     "node-cron": "^4.6.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/engines",
+      "prisma"
+    ]
   }
 }
