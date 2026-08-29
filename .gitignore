@@ -7,3 +7,12 @@ coverage/
 !.env.example
 *.log
 packages/db/generated/
+
+# Planning docs and Claude Code tooling — kept locally, not part of the submission
+docs/
+graphify-out/
+.claude/
+brand.md
+skills-lock.json
+app/AGENTS.md
+app/CLAUDE.md
