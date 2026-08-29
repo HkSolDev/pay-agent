@@ -8,13 +8,13 @@
   "scripts": {
     "dev": "pnpm --dir app dev",
     "build": "pnpm --dir app build",
-    "typecheck": "pnpm --dir app typecheck",
+    "typecheck": "pnpm --dir app typecheck && tsc --noEmit -p worker/tsconfig.json",
     "worker": "tsx worker/src/index.ts",
     "connect-gmail": "tsx worker/src/connect-gmail.ts",
     "test": "vitest run"
   },
   "devDependencies": {
-    "@types/node-cron": "^3.0.11",
+    "@types/node": "^24.10.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
@@ -22,8 +22,7 @@
   "dependencies": {
     "@composio/core": "^0.18.0",
     "@perflo-ap-agent/db": "workspace:*",
-    "dotenv": "^17.4.2",
-    "node-cron": "^4.6.0"
+    "dotenv": "^17.4.2"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

@@ -51,3 +51,51 @@ model Email {
 
   @@map("emails")
 }
+
+// Single-row table (id is always 1): the worker's "since" pointer, durable
+// across restarts. Without this, killing the worker process (which happens
+// constantly during dev) silently drops mail that arrived in the gap between
+// the last successful poll and the restart — `after:now()` on startup skips
+// straight past it.
+model IngestCheckpoint {
+  id                Int      @id @default(1)
+  sinceEpochSeconds Int      @map("since_epoch_seconds")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("ingest_checkpoint")
+}
+
+// Level 0's "locked manual pay": the owner types a recipient nickname and
+// amount once (prepare), then a separate explicit click (confirm) actually
+// pays. One intent per email — a real payee/grant/idempotency-key system
+// (FR-16, FR-23) waits for domain-modeling; this is deliberately the small
+// version that makes "never pay twice" true today, not the full one yet.
+model PaymentIntent {
+  id     String @id @default(cuid())
+  emailId String @unique @map("email_id")
+
+  recipientNickname String @map("recipient_nickname")
+  amount            String
+  currency          String @default("INR")
+
+  // Set once, at prepare time — never regenerated, so a retry after a crash
+  // reuses the same key instead of minting a new one (same principle FR-23
+  // uses: the key identifies the logical payment, not the attempt).
+  idempotencyKey String @unique @map("idempotency_key")
+
+  // pending -> claimed (row-locked, in progress) -> paid | failed
+  status String @default("pending")
+
+  paymentReference String?   @map("payment_reference")
+  // The actual reason the last attempt didn't reach "paid" — e.g. "Not
+  // connected. Run `perflo login` first." Without this the owner only ever
+  // sees a generic "Failed," which hides exactly the NOT_CONNECTED/NO_SESSION
+  // cases the PRD says should be surfaced clearly, not lumped in with an
+  // ordinary rejection.
+  lastError String?   @map("last_error")
+  claimedAt DateTime? @map("claimed_at")
+  paidAt    DateTime? @map("paid_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@map("payment_intents")
+}

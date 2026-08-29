@@ -1,13 +1,33 @@
 import "dotenv/config";
-import cron from "node-cron";
+import { prisma } from "@perflo-ap-agent/db";
 import { fetchNewGmailMessages, isGmailConnected } from "./gmail.js";
 import { ingestGmailMessages } from "./ingest.js";
 
-// PRD FR-1: poll every 5 minutes, and triggers get missed so polling has to
-// exist regardless. We track "since" in memory for Phase 0 — good enough for
-// a single long-running process; move to a DB-backed checkpoint once this
-// worker needs to survive restarts without re-scanning.
-let sinceEpochSeconds = Math.floor(Date.now() / 1000);
+// PRD FR-1 default is 5 minutes; overridable for testing (POLL_INTERVAL_SECONDS=90
+// while watching new mail arrive live). Cron syntax can't express "every 90
+// seconds" cleanly — its seconds field maxes at 59 — so this is a plain
+// interval, not a cron expression. Nothing here needs cron's calendar features.
+const POLL_INTERVAL_SECONDS = Number(process.env.POLL_INTERVAL_SECONDS ?? 300);
+
+const CHECKPOINT_ID = 1;
+
+// Durable across restarts (`ingest_checkpoint`, single row) — a killed and
+// restarted worker (which happens constantly in dev) must resume from where
+// it left off, not jump to "now" and silently skip whatever arrived in the gap.
+async function loadCheckpoint(): Promise<number> {
+  const row = await prisma.ingestCheckpoint.findUnique({ where: { id: CHECKPOINT_ID } });
+  return row?.sinceEpochSeconds ?? Math.floor(Date.now() / 1000);
+}
+
+async function saveCheckpoint(sinceEpochSeconds: number): Promise<void> {
+  await prisma.ingestCheckpoint.upsert({
+    where: { id: CHECKPOINT_ID },
+    create: { id: CHECKPOINT_ID, sinceEpochSeconds },
+    update: { sinceEpochSeconds },
+  });
+}
+
+let sinceEpochSeconds: number;
 
 async function pollOnce() {
   const startedAt = Math.floor(Date.now() / 1000);
@@ -28,19 +48,24 @@ async function pollOnce() {
     // Only move the checkpoint forward after a successful ingest — if this
     // poll throws, we want the next one to retry the same window, not skip it.
     sinceEpochSeconds = startedAt;
+    await saveCheckpoint(sinceEpochSeconds);
   } catch (err) {
     console.error("[ingest] poll failed, will retry next tick:", err);
   }
 }
 
 async function main() {
-  console.log("Perflo AP worker starting — polling Gmail every 5 minutes.");
+  sinceEpochSeconds = await loadCheckpoint();
+  console.log(
+    `Perflo AP worker starting — polling Gmail every ${POLL_INTERVAL_SECONDS}s, ` +
+      `resuming from checkpoint ${sinceEpochSeconds} (${new Date(sinceEpochSeconds * 1000).toISOString()}).`,
+  );
 
   // Run once immediately (this is the "manual Sync now" behavior at startup),
-  // then hand off to the schedule.
+  // then hand off to the interval.
   await pollOnce();
 
-  cron.schedule("*/5 * * * *", pollOnce);
+  setInterval(pollOnce, POLL_INTERVAL_SECONDS * 1000);
 }
 
 void main();

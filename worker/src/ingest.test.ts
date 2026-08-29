@@ -18,6 +18,10 @@ function fakeMessage(overrides: Partial<RawGmailMessage> = {}): RawGmailMessage 
   };
 }
 
+function encoded(value: string) {
+  return Buffer.from(value, "utf8").toString("base64url");
+}
+
 beforeEach(async () => {
   await prisma.email.deleteMany({ where: { gmailMessageId: { startsWith: "msg-" } } });
 });
@@ -35,6 +39,18 @@ describe("ingestGmailMessages", () => {
     const row = await prisma.email.findUniqueOrThrow({ where: { gmailMessageId: "msg-1" } });
     expect(row.fromAddr).toBe("riya@okaxis.example");
     expect(row.fromName).toBe("Riya Sharma");
+  });
+
+  it("persists decoded body content for the queue and later classifier", async () => {
+    await ingestGmailMessages([
+      fakeMessage({
+        messageId: "msg-body",
+        payload: { mimeType: "text/plain", body: { data: encoded("Invoice INV-1: ₹500") } },
+      }),
+    ]);
+
+    const row = await prisma.email.findUniqueOrThrow({ where: { gmailMessageId: "msg-body" } });
+    expect(row.bodyText).toBe("Invoice INV-1: ₹500");
   });
 
   it("never creates a second row for a message already ingested (FR-2)", async () => {

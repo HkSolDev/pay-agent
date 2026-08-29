@@ -1,5 +1,7 @@
 import { prisma } from "@perflo-ap-agent/db";
 import type { RawGmailMessage } from "./gmail.js";
+import { parseGmailPayload, toJsonSafeAttachments } from "./mime.js";
+import { shouldIgnoreInitialJunk } from "./junk-filter.js";
 
 // Turns "Riya Sharma <riya@example.com>" into { name, email }.
 // Plenty of real headers are just "riya@example.com" with no display name — handle both.
@@ -30,6 +32,19 @@ export async function ingestGmailMessages(messages: RawGmailMessage[]) {
       .split(",")
       .map((a) => a.trim())
       .filter(Boolean);
+    const content = parseGmailPayload(m.payload);
+    const attachmentMetadata = toJsonSafeAttachments(content.attachments);
+
+    // FR-7: plain code, no LLM. Junk still gets a row (never delete/hide the
+    // source — FR-6), it just gets pre-labeled so the real classifier
+    // doesn't waste an LLM call on something this obvious.
+    const isJunk = shouldIgnoreInitialJunk({
+      headers: m.headers,
+      subject: m.subject ?? "",
+      bodyText: content.bodyText ?? "",
+      hasAttachments: content.attachments.length > 0,
+      isCalendarInvite: content.hasCalendarInvite,
+    });
 
     return {
       gmailMessageId: m.messageId,
@@ -42,10 +57,17 @@ export async function ingestGmailMessages(messages: RawGmailMessage[]) {
       date: new Date(m.messageTimestamp),
       subject: m.subject,
       rawHeaders: m.headers,
+      bodyText: content.bodyText,
+      bodyHtmlHash: content.bodyHtmlHash,
+      attachments: attachmentMetadata,
+      links: content.links,
+      auth: {
+        spf: m.headers["Authentication-Results"]?.match(/spf=\w+/i)?.[0] ?? null,
+        dkim: m.headers["Authentication-Results"]?.match(/dkim=\w+/i)?.[0] ?? null,
+        dmarc: m.headers["Authentication-Results"]?.match(/dmarc=\w+/i)?.[0] ?? null,
+      },
       gmailLabels: m.labelIds,
-      // Body text, attachments, links, auth headers: deliberately not parsed
-      // here — gmail.ts kept `payload` raw on purpose. MIME decoding is its
-      // own step, added when Classify/Extract actually need the body.
+      classification: isJunk ? "ignored" : null,
     };
   });
 

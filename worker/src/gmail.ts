@@ -1,4 +1,5 @@
 import { Composio } from "@composio/core";
+import type { GmailPart } from "./mime.js";
 
 // Whoever connected Gmail through Composio's OAuth flow — one person's inbox,
 // per PRD 3.1. Not a per-request value; it identifies the connected account.
@@ -29,7 +30,7 @@ export interface RawGmailMessage {
   messageTimestamp: string; // ISO 8601 — confirmed from a real response, not `internalDate` as docs implied
   labelIds: string[];
   headers: Record<string, string>;
-  payload: unknown; // base64url body + attachments — parsed later, not here
+  payload?: GmailPart; // Gmail's nested MIME representation
 }
 
 /**
@@ -88,7 +89,7 @@ export async function fetchNewGmailMessages(
       subject?: string;
       messageTimestamp: string;
       labelIds?: string[];
-      payload?: { headers?: { name: string; value: string }[] };
+      payload?: GmailPart;
     };
     return {
       messageId: msg.messageId,
@@ -109,4 +110,20 @@ function flattenHeaders(headers: { name: string; value: string }[]): Record<stri
   const out: Record<string, string> = {};
   for (const h of headers) out[h.name] = h.value;
   return out;
+}
+
+/**
+ * Re-fetch one message's full payload by ID — used by the mime backfill to
+ * reprocess rows ingested before body parsing existed. Unlike the bulk fetch,
+ * this response's `data` IS the message object directly, not `data.messages[]`.
+ * Confirmed against a real call, not assumed from docs.
+ */
+export async function fetchMessageById(messageId: string): Promise<GmailPart | undefined> {
+  const session = await getSession();
+  const result = await session.execute("GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID", {
+    message_id: messageId,
+    format: "full",
+  });
+  const data = (result as { data?: { payload?: GmailPart } }).data;
+  return data?.payload;
 }
