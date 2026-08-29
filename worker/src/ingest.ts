@@ -2,6 +2,7 @@ import { prisma } from "@perflo-ap-agent/db";
 import type { RawGmailMessage } from "./gmail.js";
 import { parseGmailPayload, toJsonSafeAttachments } from "./mime.js";
 import { shouldIgnoreInitialJunk } from "./junk-filter.js";
+import { classifyEmail } from "./classifier.js";
 
 // Turns "Riya Sharma <riya@example.com>" into { name, email }.
 // Plenty of real headers are just "riya@example.com" with no display name — handle both.
@@ -45,6 +46,15 @@ export async function ingestGmailMessages(messages: RawGmailMessage[]) {
       hasAttachments: content.attachments.length > 0,
       isCalendarInvite: content.hasCalendarInvite,
     });
+    const classification = isJunk
+      ? null
+      : classifyEmail({
+          subject: m.subject,
+          bodyText: content.bodyText,
+          fromName: from.name,
+          fromAddr: from.email,
+          hasAttachments: content.attachments.length > 0,
+        });
 
     return {
       gmailMessageId: m.messageId,
@@ -67,7 +77,11 @@ export async function ingestGmailMessages(messages: RawGmailMessage[]) {
         dmarc: m.headers["Authentication-Results"]?.match(/dmarc=\w+/i)?.[0] ?? null,
       },
       gmailLabels: m.labelIds,
-      classification: isJunk ? "ignored" : null,
+      classification: isJunk ? "ignored" : classification?.kind ?? null,
+      classificationConfidence: classification?.confidence ?? null,
+      classificationRationale: classification?.rationale ?? null,
+      injectionDetected: classification?.injectionDetected ?? false,
+      injectionEvidence: classification?.injectionEvidence ?? [],
     };
   });
 

@@ -42,9 +42,14 @@ model Email {
   senderFirstSeen  DateTime? @map("sender_first_seen")
   inOwnerThread    Boolean   @default(false) @map("in_owner_thread")
 
-  // Nullable: Level 0 has no LLM, so nothing classifies these yet (PRD 3.3).
+  // Level 1 triage result. The cheap Level 0 junk pass remains `ignored`;
+  // every other message receives the classifier's kind, confidence and
+  // evidence before it enters the queue.
   classification           String?
   classificationConfidence Float?  @map("classification_confidence")
+  classificationRationale  String? @map("classification_rationale")
+  injectionDetected        Boolean @default(false) @map("injection_detected")
+  injectionEvidence        Json?   @map("injection_evidence")
 
   gmailLabels String[] @map("gmail_labels")
   ingestedAt  DateTime @default(now()) @map("ingested_at")
