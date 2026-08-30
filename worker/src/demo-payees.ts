@@ -70,6 +70,15 @@ const specs: DemoPayeeSpec[] = [
     senderAddrs: ["revoked@vendor.example"],
     rails: [{ method: { kind: "upi", vpa: "revoked@okaxis" }, revoked: true }],
   },
+  {
+    id: `${DEMO_PAYEE_PREFIX}duplicates`,
+    name: "Duplicate Fixtures — two sender addresses for duplicate detection",
+    senderAddrs: ["vendor9@vendor.example", "vendor10@vendor.example"],
+    rails: [
+      { method: { kind: "upi", vpa: "vendor9@okaxis" } },
+      { method: { kind: "upi", vpa: "vendor10@okaxis" } },
+    ],
+  },
 ];
 
 function encryptedRailData(spec: DemoRailSpec) {

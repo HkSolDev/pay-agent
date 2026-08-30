@@ -1,6 +1,6 @@
 # Tests
 
-The project currently has 226 automated tests across 36 files. Run the full suite with:
+The project currently has 227 automated tests across 36 files. Run the full suite with:
 
 ```bash
 pnpm test
@@ -19,4 +19,4 @@ Coverage includes Gmail/MIME/PDF ingestion, explicit PDF extraction status, junk
 
 A note on test isolation: several payee integration tests set `PAYEE_ENCRYPTION_KEY`/`PAYEE_HASH_KEY` and share the same local Postgres instance. Give new payee fixtures unique sender addresses/rail values — reusing another test file's exact values (even across files) can cause spurious decrypt failures when tests run in parallel. Demo seed modules (`demo-payees.ts`) must also build their encrypted rail data *inside* their seed function, not at module load time, since an env-var override from a caller (e.g. a test's `beforeEach`) happens after the module's own imports run.
 
-Still to add: fixture-based `.eml` red-team cases under `tests/injections/`, scanned/unsupported-currency ingestion fixtures, a full edge-case pass over the demo scenarios against the demo payees, x402/browser verification tests, crash/reconciliation tests, and the full T-7–T-25 acceptance run after Perflo KYC is complete.
+Still to add: fixture-based `.eml` red-team cases under `tests/injections/`, x402/browser verification tests, crash/reconciliation tests, and the full T-7–T-25 acceptance run after Perflo KYC is complete.

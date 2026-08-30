@@ -8,7 +8,7 @@ Level 0 and the Level 1 review-only pipeline are complete. The Queue row review 
 
 Last successful verification on 2026-08-30:
 
-- `pnpm test` — 226/226 passing across 36 test files (re-run 3x to confirm no flakiness)
+- `pnpm test` — 227/227 passing across 36 test files
 - `pnpm typecheck` — clean
 - `pnpm --dir app build` — successful, `/payees` route registered
 - Prisma — 10 migrations applied and up to date
@@ -49,10 +49,9 @@ The runner seeds namespaced `demo-*` rows through the real MIME, PDF-status,
 classification, extraction, verification, duplicate, and policy path. `--reset`
 only deletes those demo rows; it never deletes real inbox data.
 
-Seed the matching demo payees (normal UPI, bank/NEFT, multiple rails, a
-conflicting rail, and a revoked rail) so the demo inbox's "changed-upi",
-"unknown-sender", "multiple-rails", and "conflicting-sender-rail" scenarios
-actually resolve against something:
+Seed the matching demo payees (normal UPI, bank/NEFT, multiple rails, duplicate
+fixtures, a conflicting rail, and a revoked rail) so the demo inbox scenarios
+resolve against real approved-payee rows:
 
 ```bash
 pnpm demo:payees --reseed
@@ -76,7 +75,7 @@ The LLM has no tools or payment permission. Payment decisions are deterministic 
 
 ## Next work
 
-The local seeded demo/test inbox and the Payees management UI (identities, encrypted rails, grant caps, replace/revoke) are both complete. The next milestone is a full edge-case review pass over the demo scenarios against the demo payees, then a dedicated Gmail test mailbox for real ingestion validation. Only after Perflo KYC clears should Perflo actually be connected and one small manual payment reconciled.
+The local seeded demo/test inbox, Payees management UI, and full edge-case review pass are complete. The next milestone is a dedicated Gmail test mailbox for real ingestion validation. Only after Perflo KYC clears should Perflo actually be connected and one small manual payment reconciled.
 
 See [`hands-off.md`](hands-off.md) for the complete architecture, current-state summary, changed-file review list, and KYC-gated work.
 

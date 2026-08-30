@@ -1,8 +1,8 @@
 # Perflo AP Agent — Hands-off Handoff
 
-Last verified: 2026-08-30 13:31 IST
-Branch: `level1-classifier-llm`
-Latest commit: `67e66d9` (`UI: add Queue row review drawer, review-only`) — Payees work below is uncommitted on top of it.
+Last verified: 2026-08-30 13:47 IST
+Branch: `codex/level1-edge-case-review` (fresh branch from merged `origin/main`)
+Base commit: `1e4dad4` (`Merge pull request #3 from HkSolDev/level1-classifier-llm`) — edge-case review work is uncommitted on top.
 
 ## Current outcome
 
@@ -10,7 +10,7 @@ Level 0 is complete and Level 1 is implemented in **review-only/dry-run mode**. 
 
 The latest successful verification ran against local Postgres:
 
-- `pnpm test`: **226/226 passing** across 36 test files (run 3x back to back to confirm no flakiness)
+- `pnpm test`: **227/227 passing** across 36 test files
 - `pnpm typecheck`: clean
 - `pnpm --dir app build`: successful (Turbopack production build), `/payees` route registered alongside `/`
 - Prisma: **10 migrations applied; database up to date** — new migration `20260830064402_payee_grant_and_rail_lifecycle` adds grant caps/expiry/status to `Payee` and status/created/replaced/revoked timestamps to `PayeePaymentMethod`
@@ -180,9 +180,8 @@ In plain terms: the Payees screen, the encrypted rail storage, and the whole rev
 
 The Payees management screen described below is implemented and tested. **Do not reintroduce it as the next task.** The next task is to move down the agreed testing sequence:
 
-1. Full edge-case review pass over the demo scenarios in `worker/src/demo-inbox.ts` (`--list` shows all names) against the demo payees in `worker/src/demo-payees.ts` — confirm every documented case (missing fields, unsupported currency, scanned/corrupt PDFs, lookalike domains, Reply-To mismatch) still routes exactly where the PRD says, now that real approved payees exist to resolve against.
-2. Only after that: a dedicated Gmail test mailbox for real ingestion validation (not the owner's real inbox — see "Do not do" below).
-3. Only after KYC clears: connect Perflo, verify identity, and reconcile one small manual payment.
+1. Dedicated Gmail test mailbox for real ingestion validation (not the owner's real inbox — see "Do not do" below).
+2. Only after KYC clears: connect Perflo, verify identity, and reconcile one small manual payment.
 
 Do not connect the Perflo "Connect an agent" screen or attempt a real payment to continue either of these — both are local-only.
 
@@ -232,7 +231,7 @@ More information is in `.env.example` for safe local configuration, `packages/db
 - Add OCR/image-only PDF detection that routes to review.
 - Add event/audit timeline storage.
 - Document the supported-currency boundary: current structured extraction is INR/USD; unsupported currencies require review.
-- Full edge-case pass over the demo scenarios (see "Exact next task" above).
+- Repeat the demo edge-case pass when changing classifier, extraction, resolver, verifier, or policy behavior.
 
 ## Work blocked or gated by KYC/Perflo access
 
