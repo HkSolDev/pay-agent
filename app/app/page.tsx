@@ -1,5 +1,7 @@
 import { prisma } from "@perflo-ap-agent/db";
 import { PaymentCell } from "./payment-cell";
+import { ReviewDrawerLauncher } from "./review-drawer";
+import type { ReviewEmail, ReviewIntent } from "./review-drawer-model";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -118,6 +120,40 @@ export default async function QueuePage() {
               ) : (
                 emails.map((email) => {
                   const intent = intentByEmailId.get(email.id);
+                  const reviewEmail: ReviewEmail = {
+                    id: email.id,
+                    gmailMessageId: email.gmailMessageId,
+                    gmailThreadId: email.gmailThreadId,
+                    fromName: email.fromName,
+                    fromAddr: email.fromAddr,
+                    replyTo: email.replyTo,
+                    returnPath: email.returnPath,
+                    toAddrs: email.toAddrs,
+                    date: email.date.toISOString(),
+                    subject: email.subject,
+                    bodyText: email.bodyText,
+                    attachments: email.attachments,
+                    auth: email.auth,
+                    classification: email.classification,
+                    classificationConfidence: email.classificationConfidence,
+                    classificationRationale: email.classificationRationale,
+                    injectionDetected: email.injectionDetected,
+                    injectionEvidence: email.injectionEvidence,
+                    extractionSummary: email.extractionSummary,
+                    extractionBackend: email.extractionBackend,
+                    payeeResolution: email.payeeResolution,
+                    verificationResult: email.verificationResult,
+                    duplicateResult: email.duplicateResult,
+                    policyDecision: email.policyDecision,
+                    policyReasons: email.policyReasons,
+                    level1ProcessedAt: email.level1ProcessedAt?.toISOString() ?? null,
+                    reviewStatus: email.reviewStatus,
+                    reviewedAt: email.reviewedAt?.toISOString() ?? null,
+                  };
+                  const reviewIntent: ReviewIntent | undefined = intent ? {
+                    status: intent.status,
+                    paidAt: intent.paidAt?.toISOString() ?? null,
+                  } : undefined;
                   return (
                     <tr key={email.id}>
                       <td>{email.fromName ?? email.fromAddr}</td>
@@ -125,10 +161,11 @@ export default async function QueuePage() {
                         <div className="message-cell">
                           <strong>{email.subject ?? "(no subject)"}</strong>
                           <span>{email.bodyText?.slice(0, 140) ?? "No body content stored"}</span>
+                          <ReviewDrawerLauncher email={reviewEmail} intent={reviewIntent} />
                         </div>
                       </td>
                       <td>{email.date.toLocaleString()}</td>
-                      <td><span className="status">{email.classification ?? "queued"}</span></td>
+                      <td><span className="status">{email.reviewStatus ?? email.policyDecision ?? email.classification ?? "queued"}</span></td>
                       <td>
                         <div className="message-cell">
                           <strong>{email.policyDecision ?? "pending review"}</strong>

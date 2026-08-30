@@ -100,6 +100,7 @@ function extractionSummary(extraction: ExtractionResult) {
     payeeNameConfidence: extraction.payeeNameConfidence,
     amount: extraction.amount,
     amountConfidence: extraction.amountConfidence,
+    currencyConfidence: extraction.amount ? extraction.amountConfidence : 0,
     referenceNumber: extraction.referenceNumber,
     referenceNumberConfidence: extraction.referenceNumberConfidence,
     referenceIsFallback: extraction.referenceNumberConfidence > 0 && extraction.referenceNumberConfidence < 0.85,
@@ -120,26 +121,29 @@ function jsonForStorage(value: unknown): ReturnType<typeof JSON.parse> {
   return JSON.parse(JSON.stringify(value));
 }
 
-async function processInsertedEmails(deps: IngestDeps, gmailMessageIds: string[]): Promise<void> {
-  const rows = await prisma.email.findMany({
-    where: { gmailMessageId: { in: gmailMessageIds }, level1ProcessedAt: null },
-    select: {
-      id: true, gmailMessageId: true, fromAddr: true, fromName: true, subject: true, bodyText: true, replyTo: true,
-      auth: true, links: true, classification: true, classificationConfidence: true, classificationRationale: true,
-      injectionDetected: true, injectionEvidence: true,
-    },
-  });
-  if (rows.length === 0) return;
+type ProcessableEmail = {
+  id: string;
+  gmailMessageId: string;
+  fromAddr: string;
+  fromName: string | null;
+  subject: string | null;
+  bodyText: string | null;
+  replyTo: string | null;
+  auth: unknown;
+  links: unknown;
+  classification: string | null;
+  classificationConfidence: number | null;
+  classificationRationale: string | null;
+  injectionDetected: boolean;
+  injectionEvidence: unknown;
+};
 
-  const approvedPayees = await (deps.loadApprovedPayees?.() ?? Promise.resolve([]));
-  const previousRows = await prisma.email.findMany({
-    where: { level1ProcessedAt: { not: null } },
-    select: { id: true, resolvedPayeeId: true, extractionSummary: true },
-  });
-  const history = fingerprintsFromRows(previousRows);
-  const extract = deps.extractPaymentDetails ?? extractWithSelectedBackend;
-
-  await Promise.all(rows.map(async (row) => {
+async function processEmailRow(
+  row: ProcessableEmail,
+  approvedPayees: ApprovedPayee[],
+  history: PayableFingerprint[],
+  extract: (input: ExtractionInput) => Promise<ExtractionResult>,
+): Promise<void> {
     const kind = row.classification ?? "unrelated";
     const result: Level1PipelineResult = await processLevel1({
       emailId: row.id,
@@ -172,7 +176,57 @@ async function processInsertedEmails(deps: IngestDeps, gmailMessageIds: string[]
         level1ProcessedAt: new Date(),
       },
     });
-  }));
+}
+
+const processableEmailSelect = {
+  id: true, gmailMessageId: true, fromAddr: true, fromName: true, subject: true, bodyText: true, replyTo: true,
+  auth: true, links: true, classification: true, classificationConfidence: true, classificationRationale: true,
+  injectionDetected: true, injectionEvidence: true,
+} as const;
+
+async function processInsertedEmails(deps: IngestDeps, gmailMessageIds: string[]): Promise<void> {
+  const rows = await prisma.email.findMany({
+    where: { gmailMessageId: { in: gmailMessageIds }, level1ProcessedAt: null },
+    select: processableEmailSelect,
+  });
+  if (rows.length === 0) return;
+
+  const approvedPayees = await (deps.loadApprovedPayees?.() ?? Promise.resolve([]));
+  const previousRows = await prisma.email.findMany({
+    where: { level1ProcessedAt: { not: null } },
+    select: { id: true, resolvedPayeeId: true, extractionSummary: true },
+  });
+  const history = fingerprintsFromRows(previousRows);
+  const extract = deps.extractPaymentDetails ?? extractWithSelectedBackend;
+
+  await Promise.all(rows.map((row) => processEmailRow(row, approvedPayees, history, extract)));
+}
+
+/** Processes rows explicitly queued for another review-only worker pass. */
+export async function processPendingLevel1(deps: IngestDeps = defaultDeps): Promise<void> {
+  const rows = await prisma.email.findMany({
+    where: { level1ProcessedAt: null },
+    select: processableEmailSelect,
+  });
+  if (rows.length === 0) return;
+
+  const approvedPayees = await (deps.loadApprovedPayees?.() ?? Promise.resolve([]));
+  const previousRows = await prisma.email.findMany({
+    where: { level1ProcessedAt: { not: null } },
+    select: { id: true, resolvedPayeeId: true, extractionSummary: true },
+  });
+  await Promise.all(rows.map((row) => processEmailRow(row, approvedPayees, fingerprintsFromRows(previousRows), deps.extractPaymentDetails ?? extractWithSelectedBackend)));
+}
+
+/** Re-run the review-only Level 1 stages for an existing email. */
+export async function retryLevel1Processing(emailId: string): Promise<void> {
+  const row = await prisma.email.findUniqueOrThrow({ where: { id: emailId }, select: processableEmailSelect });
+  const approvedPayees = await loadApprovedPayees();
+  const previousRows = await prisma.email.findMany({
+    where: { level1ProcessedAt: { not: null } },
+    select: { id: true, resolvedPayeeId: true, extractionSummary: true },
+  });
+  await processEmailRow(row, approvedPayees, fingerprintsFromRows(previousRows), extractWithSelectedBackend);
 }
 
 function isPdfAttachment(attachment: ParsedAttachment): boolean {
@@ -193,16 +247,23 @@ async function appendPdfText(
   bodyText: string | null,
   attachments: ParsedAttachment[],
   deps: IngestDeps,
-): Promise<string | null> {
+): Promise<{ bodyText: string | null; statuses: Map<string, "extracted" | "failed" | "skipped"> }> {
   const sections = bodyText ? [bodyText] : [];
+  const statuses = new Map<string, "extracted" | "failed" | "skipped">();
   let fetchedPdfCount = 0;
   for (const attachment of attachments) {
-    if (!isPdfAttachment(attachment) || !attachment.attachmentId) continue;
+    if (!isPdfAttachment(attachment)) continue;
+    if (!attachment.attachmentId) {
+      statuses.set(attachment.filename, "skipped");
+      continue;
+    }
     if (fetchedPdfCount >= MAX_PDF_ATTACHMENTS_PER_EMAIL) {
+      statuses.set(attachment.filename, "skipped");
       console.warn(`Skipping PDF attachment "${attachment.filename}" on message ${messageId}: attachment-count limit reached.`);
       continue;
     }
     if (attachment.size > MAX_PDF_ATTACHMENT_BYTES) {
+      statuses.set(attachment.filename, "skipped");
       console.warn(`Skipping PDF attachment "${attachment.filename}" on message ${messageId}: exceeds size limit.`);
       continue;
     }
@@ -210,13 +271,19 @@ async function appendPdfText(
     try {
       const bytes = await deps.fetchAttachmentBytes(messageId, attachment.attachmentId, attachment.filename, MAX_PDF_ATTACHMENT_BYTES);
       const text = await deps.extractPdfText(bytes);
-      if (text) sections.push(`--- ${attachment.filename} ---\n${text}`);
+      if (text) {
+        sections.push(`--- ${attachment.filename} ---\n${text}`);
+        statuses.set(attachment.filename, "extracted");
+      } else {
+        statuses.set(attachment.filename, "failed");
+      }
     } catch (error) {
+      statuses.set(attachment.filename, "failed");
       const reason = error instanceof Error ? error.message : String(error);
       console.error(`PDF extraction failed for "${attachment.filename}" on message ${messageId}: ${reason}`);
     }
   }
-  return sections.length > 0 ? sections.join("\n\n") : null;
+  return { bodyText: sections.length > 0 ? sections.join("\n\n") : null, statuses };
 }
 
 // Turns "Riya Sharma <riya@example.com>" into { name, email }.
@@ -249,7 +316,7 @@ export async function ingestGmailMessages(messages: RawGmailMessage[], deps: Ing
       .map((a) => a.trim())
       .filter(Boolean);
     const content = parseGmailPayload(m.payload);
-    const attachmentMetadata = toJsonSafeAttachments(content.attachments);
+    let attachmentMetadata = toJsonSafeAttachments(content.attachments);
 
     // FR-7: plain code, no LLM. Junk still gets a row (never delete/hide the
     // source — FR-6), it just gets pre-labeled so the real classifier
@@ -266,9 +333,16 @@ export async function ingestGmailMessages(messages: RawGmailMessage[], deps: Ing
     // attached to an obvious newsletter isn't worth a Composio call and a
     // parse. This is what the stored row AND the classifier both see, so a
     // PDF invoice with no text in the email body itself is still visible.
-    const bodyText = isJunk
-      ? content.bodyText
-      : await appendPdfText(m.messageId, content.bodyText, content.attachments, deps);
+    let bodyText = content.bodyText;
+    if (!isJunk) {
+      const pdfResult = await appendPdfText(m.messageId, content.bodyText, content.attachments, deps);
+      bodyText = pdfResult.bodyText;
+      attachmentMetadata = attachmentMetadata.map((metadata) => {
+        const filename = metadata.filename;
+        const status = typeof filename === "string" ? pdfResult.statuses.get(filename) : undefined;
+        return status ? { ...metadata, extractionStatus: status } : metadata;
+      });
+    }
 
     const classification = isJunk
       ? null

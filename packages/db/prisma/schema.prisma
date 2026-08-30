@@ -64,6 +64,8 @@ model Email {
   policyDecision String?     @map("policy_decision")
   policyReasons String[]     @default([]) @map("policy_reasons")
   level1ProcessedAt DateTime? @map("level1_processed_at")
+  reviewStatus String? @map("review_status")
+  reviewedAt DateTime? @map("reviewed_at")
 
   gmailLabels String[] @map("gmail_labels")
   ingestedAt  DateTime @default(now()) @map("ingested_at")

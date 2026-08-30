@@ -2,7 +2,7 @@
 
 import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@perflo-ap-agent/db";
+import { prisma, Prisma } from "@perflo-ap-agent/db";
 import { requestManualPayment } from "../../worker/src/manual-pay";
 import { payViaPerfloCli, PerfloUnknownOutcomeError } from "../../worker/src/perflo-cli";
 import { claimPaymentIntent } from "../../worker/src/payment-claim";
@@ -90,4 +90,49 @@ export async function confirmPayment(emailId: string, _formData: FormData): Prom
     revalidatePath("/");
     throw err;
   }
+}
+
+const REVIEW_ACTIONS = {
+  approve: "approved_for_review",
+  reject: "rejected",
+  not_an_invoice: "not_an_invoice",
+} as const;
+
+/**
+ * Records an owner review decision separately from PaymentIntent. These
+ * actions never prepare, claim, or execute a payment.
+ */
+export async function updateReviewAction(formData: FormData): Promise<void> {
+  const emailId = String(formData.get("emailId") ?? "").trim();
+  const action = String(formData.get("action") ?? "").trim() as keyof typeof REVIEW_ACTIONS;
+  if (!emailId || !Object.prototype.hasOwnProperty.call(REVIEW_ACTIONS, action)) throw new Error("Invalid review action.");
+
+  await prisma.email.update({
+    where: { id: emailId },
+    data: { reviewStatus: REVIEW_ACTIONS[action], reviewedAt: new Date() },
+  });
+  revalidatePath("/");
+}
+
+/** Queues a review-only reprocessing pass for the worker. */
+export async function retryReviewProcessing(formData: FormData): Promise<void> {
+  const emailId = String(formData.get("emailId") ?? "").trim();
+  if (!emailId) throw new Error("The email to retry is missing.");
+  await prisma.email.update({
+    where: { id: emailId },
+    data: {
+      reviewStatus: "retry_requested",
+      reviewedAt: null,
+      extractionSummary: Prisma.JsonNull,
+      extractionBackend: null,
+      resolvedPayeeId: null,
+      payeeResolution: Prisma.JsonNull,
+      verificationResult: Prisma.JsonNull,
+      duplicateResult: Prisma.JsonNull,
+      policyDecision: null,
+      policyReasons: [],
+      level1ProcessedAt: null,
+    },
+  });
+  revalidatePath("/");
 }
