@@ -255,7 +255,13 @@ export function QueueView({
                       <strong className="queue-sender">{email.fromName ?? email.fromAddr}</strong>
                       {reference && <span className="queue-ref">· {reference}</span>}
                       <time className="queue-date" dateTime={email.date}>
-                        · {new Date(email.date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                        {/* Explicit locale, not `undefined` — `undefined` uses
+                            the runtime's default locale, which differs
+                            between the server (Node's locale) and the
+                            browser (the visitor's locale), producing two
+                            different strings for the same date and a
+                            hydration mismatch. */}
+                        · {new Date(email.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                       </time>
                     </div>
                     <div className="badge-group">
