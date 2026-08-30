@@ -1,11 +1,13 @@
 # Tests
 
-The project currently has 227 automated tests across 36 files. Run the full suite with:
+The project currently has 267 automated tests across 43 files. Run the full suite with:
 
 ```bash
 pnpm test
 pnpm typecheck
 ```
+
+**If `.env` has `CLASSIFIER_MODE=llm` and/or `EXTRACTOR_MODE=llm` set**, unset them before running the full suite. `worker/src/demo-inbox.ts`'s seed deps hardcode the classifier to the deterministic path but not the extractor, so `demo-scenarios.integration.test.ts`'s unfiltered `seedDemoInbox()` call (23 scenarios) falls through to `extractWithSelectedBackend` and makes 23 real OpenAI calls — this reliably exceeds vitest's default 5000ms timeout and fails that one test. With both unset (the safe default), the suite is 267/267 clean. This is a real gap worth fixing (the demo seed should be fully deterministic like it already is for classification), not yet done.
 
 The database-backed tests require the local Postgres service:
 
