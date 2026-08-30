@@ -131,6 +131,12 @@ h1 {
   font-weight: 700;
 }
 
+.notice-warn {
+  border-color: #fde68a;
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
 /* 4 KPI Summary Cards Grid */
 .kpi-grid {
   display: grid;
