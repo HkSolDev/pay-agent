@@ -94,6 +94,14 @@ export async function processLevel1(
   const resolution: ResolveResult = extraction.paymentMethods.length === 1
     ? resolvePayee({ senderAddr: input.extractionInput.fromAddr ?? "", paymentMethod: extraction.paymentMethods[0] }, input.approvedPayees)
     : extraction.paymentMethods.length > 1 ? { status: "multiple_payment_methods" } : { status: "new_payee" };
+  // A changed rail and an unresolved multi-rail invoice are ordinary owner
+  // review cases. The resolver already carries the decisive status; do not
+  // let the verifier's generic mismatch evidence upgrade those cases to
+  // quarantine. A sender/rail belonging to different payees remains a
+  // quarantine through identity_method_conflict.
+  if (resolution.status === "details_changed" || resolution.status === "multiple_payment_methods") {
+    verification.hardFails = verification.hardFails.filter((fail) => fail !== "payment_method_mismatch");
+  }
   const resolvedPayeeId = resolution.status === "resolved" ? resolution.payeeId : null;
   const referenceIsFallback = extraction.referenceNumberConfidence > 0 && extraction.referenceNumberConfidence < 0.85;
   const duplicate: DuplicateResult = resolvedPayeeId && extraction.amount

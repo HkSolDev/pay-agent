@@ -1,8 +1,57 @@
 # Perflo AP Agent — Hands-off Handoff
 
-Last verified: 2026-08-30 13:31 IST
-Branch: `level1-classifier-llm`
-Latest commit: `67e66d9` (`UI: add Queue row review drawer, review-only`) — Payees work below is uncommitted on top of it.
+Last verified: 2026-08-30 20:15 IST
+Branch: `codex/level1-edge-case-review` (fresh branch from merged `origin/main`)
+Base commit: `1e4dad4` (`Merge pull request #3 from HkSolDev/level1-classifier-llm`)
+Open PR: [HkSolDev/pay-agent#4](https://github.com/HkSolDev/pay-agent/pull/4) — "Add pluggable payment-executor with RazorpayX sandbox adapter", ready for review (not draft), everything below is pushed and committed, nothing uncommitted.
+
+## Read this first (new chat window / new AI session)
+
+Before touching this repo, read in this order:
+
+1. This file (`hands-off.md`) in full — it is the authoritative "what actually happened and why," not just a task list.
+2. `README.md` and `tests/README.md` — current commands, test count, and the parallel-test-key-collision note (see "Known flakiness" below — don't mistake it for a real regression).
+3. `packages/db/prisma/schema.prisma` — the real persistence boundaries; trust this over any prose description of a model shape.
+4. `worker/src/payment-executor.ts` — the new provider-neutral payment interface (this session's main addition); read its file-header comment on the RBI/PPI/escrow boundary before proposing anything involving holding funds.
+5. **Do not trust any of the above blindly** — this handoff was itself corrected mid-session after a "confirmed bug" turned out to be stale/corrupted local Postgres state, not a real code defect (see "A verification lesson from this session" below). Re-run `pnpm test` and the demo reseed commands yourself before accepting any claim here as still true.
+
+## Session summary — 2026-08-30, PR #4
+
+This session did three things, in order:
+
+**1. Verified the prior handoff instead of trusting it.** Re-ran `pnpm test` (227/227 → later 253/253 as new tests were added), `pnpm typecheck`, and `prisma migrate status` against the actual code before acting on anything the previous handoff claimed. Everything it claimed held up.
+
+**2. Ran the full edge-case review pass** (`pnpm demo:payees --reset --reseed`, `pnpm demo:inbox --reset --reseed`) — the task the previous handoff named as next. All 23 demo scenarios (see `pnpm demo:inbox --list`) were checked against the policy engine's actual decision for each, by querying the `emails` table directly (`policy_decision`, `policy_reasons`, `classification`). Every scenario routed exactly as its name promises: `changed-upi`/`changed-bank` → `needs_approval` via `details_changed`; `lookalike-domain`/`remote-links`/`prompt-injection`/`conflicting-sender-rail` → `quarantine`; `missing-amount`/`missing-currency`/`unsupported-currency`/PDF-based scenarios → `needs_approval` with accurate low-confidence reasons (never silently dropped); `exact-duplicate-replay` → `ignore` as a duplicate. **No code changes were needed from this pass** — see "A verification lesson from this session" for why an initial run looked broken and wasn't.
+
+**3. Built a pluggable payment-executor layer** (the user's own idea, refined mid-session): instead of waiting on Perflo KYC, made the payment-execution step swappable so the same reviewed decision can pay out through Perflo *or* RazorpayX (test mode), decided at runtime by which env vars are set. A second AI's review of the initial plan added an important correction (kept in the design): this only ever calls a *regulated provider's* payout API from an account the owner controls — it must never accept, pool, or hold third-party funds itself (that's PPI/escrow territory under RBI rules, explicitly out of scope). The RazorpayX adapter was then verified field-by-field against `razorpay.com/docs/api/x/` in-browser, which caught two real bugs before they'd have hit a live account: a missing required `account_number` (the source account being debited, distinct from the recipient's own bank/UPI details) and a nonexistent `failure_reason` response field (the real field is `status_details.description`). Both are fixed. The adapter also now refuses non-INR requests up front, since RazorpayX's documented payout endpoints only support INR.
+
+### A verification lesson from this session (read this before trusting any local run)
+
+Partway through the edge-case pass, Docker's Postgres container crashed independently of anything in this repo, and a live background `pnpm worker` process (polling a **dedicated Gmail test mailbox**, confirmed intentional and safe — not the owner's real inbox) kept re-touching the same local database while it was flapping. This produced a first read of the demo data that looked exactly like a real classifier bug (several invoice scenarios appearing to silently route to `ignore` instead of `needs_approval`). After Docker was restarted and the demo tables were cleanly reset (`--reset --reseed`, not just `--reseed`), the exact same scenarios routed correctly. **The lesson, not just the anecdote:** when local Postgres and/or a live background worker have both been touching the same demo tables, do a clean `--reset --reseed` (both payees and inbox) before drawing any conclusion from what's in the database — a partial/stale reseed looks identical to a real regression until you rule it out.
+
+## Files changed this session (payment-executor)
+
+- `worker/src/payment-executor.ts` — the interface: `createPayout`/`getPayoutStatus`, integer minor units (never decimal), `processing`/`paid`/`failed`/`unknown` as first-class statuses, one idempotency key reused per logical payout. Also exports `PaymentUnknownOutcomeError`/`PaymentDefiniteFailure`, the provider-neutral counterparts to `perflo-cli.ts`'s existing Perflo-specific error classes.
+- `worker/src/payment-executor-razorpay.ts` and `.test.ts` — RazorpayX sandbox adapter (Contact → Fund Account → Payout), doc-verified. Needs a `keyId`, `keySecret`, and `accountNumber` (RazorpayX source account, **not** the recipient's account) to construct.
+- `worker/src/payment-executor-perflo.ts` and `.test.ts` — wraps the existing `payViaPerfloCli` as the same interface; no behavior change to the underlying CLI call.
+- `worker/src/payment-amount.ts`, `payment-executor-destination.ts`, `payment-executor-adapter.ts` (+ `.test.ts` each) — small pure helpers: decimal-string↔minor-units conversion, `PaymentMethod`→`PayoutDestination` mapping, and bridging a `PayoutResult` back to the older throw-based `payRecipient` contract `manual-pay.ts` still uses.
+- `app/app/actions.ts` — `confirmPayment` now calls `payViaConfiguredExecutor`, which picks Razorpay only when `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET`/`RAZORPAY_ACCOUNT_NUMBER` are all set, resolving the payee's rail via `loadApprovedPayees` matched by nickname; unset (the default) is byte-for-byte today's Perflo path.
+- `.env.example` — documents the three Razorpay test-mode-only env vars.
+- `worker/src/demo-inbox.ts`, `demo-payees.ts`, `demo-scenarios.integration.test.ts`, `classifier.ts`, `ingest.ts`, `level1-pipeline.ts` — pre-existing uncommitted changes from the prior session (the `loadApprovedPayees` wiring fix and `conflicting-sender-rail` scenario), committed together with this session's work since they were sitting in the same working tree.
+
+## Next steps (in order)
+
+1. **Manual smoke test against a real RazorpayX test-mode account** — this session verified the adapter against docs and mocked `fetch`, but never against a live sandbox (no test keys are present in this repo, and none should be pasted into chat). Get RazorpayX test-mode keys + the test-mode customer identifier (`RAZORPAY_ACCOUNT_NUMBER`), seed a demo `needs_approval` invoice, click "Confirm pay," and confirm the full Contact → Fund Account → Payout sequence actually completes against Razorpay's sandbox, landing in `PaymentIntent.status = paid`.
+2. **Branch decision, still open from before this session**: `codex/level1-edge-case-review` is a fresh branch off merged `main`, so the original "level1-classifier-llm no longer matches its contents" naming problem is resolved by branching fresh — but decide whether PR #4 should merge before or after item 1's live smoke test.
+3. **Dedicated Gmail test mailbox for real ingestion validation** — still not done as of this handoff; the live `pnpm worker` process observed mid-session was already pointed at one (confirmed by the user), but that setup itself isn't documented anywhere in this repo yet. Document it once confirmed stable.
+4. **Only after Perflo KYC clears**: connect Perflo for real, verify identity, reconcile one small manual payment — unchanged from before, still fully blocked externally.
+
+## What should be reviewed later
+
+- The `payViaConfiguredExecutor` destination-resolution logic in `app/app/actions.ts` (matches by `recipientNickname` string, not a real FK — inherits the pre-existing `PaymentIntent`↔`Payee` gap documented earlier in this file under "Two relationships are deliberately not real foreign keys"). If that gap ever gets closed, this lookup should be revisited too.
+- Whether `PaymentIntent`'s schema should grow a `processing` status to match the new `PaymentExecutor` interface's status vocabulary — currently `processing` collapses to `unknown_outcome` in `payoutResultToLegacyPayResult` (see that file's comment) because the existing schema has no representation for "in flight."
+- A Stripe adapter, if USD/international payouts become a real requirement — deliberately not started; RazorpayX's payout model doesn't generalize to it, per the second AI's review captured in this session (see PR #4's description).
+- Webhook-based reconciliation for RazorpayX payouts (currently poll-only via `getPayoutStatus`) — same "fast-follow, not designed out" status as it was for Perflo's own reconciliation gap noted below.
 
 ## Current outcome
 
@@ -10,7 +59,7 @@ Level 0 is complete and Level 1 is implemented in **review-only/dry-run mode**. 
 
 The latest successful verification ran against local Postgres:
 
-- `pnpm test`: **226/226 passing** across 36 test files (run 3x back to back to confirm no flakiness)
+- `pnpm test`: **227/227 passing** across 36 test files
 - `pnpm typecheck`: clean
 - `pnpm --dir app build`: successful (Turbopack production build), `/payees` route registered alongside `/`
 - Prisma: **10 migrations applied; database up to date** — new migration `20260830064402_payee_grant_and_rail_lifecycle` adds grant caps/expiry/status to `Payee` and status/created/replaced/revoked timestamps to `PayeePaymentMethod`
@@ -180,9 +229,8 @@ In plain terms: the Payees screen, the encrypted rail storage, and the whole rev
 
 The Payees management screen described below is implemented and tested. **Do not reintroduce it as the next task.** The next task is to move down the agreed testing sequence:
 
-1. Full edge-case review pass over the demo scenarios in `worker/src/demo-inbox.ts` (`--list` shows all names) against the demo payees in `worker/src/demo-payees.ts` — confirm every documented case (missing fields, unsupported currency, scanned/corrupt PDFs, lookalike domains, Reply-To mismatch) still routes exactly where the PRD says, now that real approved payees exist to resolve against.
-2. Only after that: a dedicated Gmail test mailbox for real ingestion validation (not the owner's real inbox — see "Do not do" below).
-3. Only after KYC clears: connect Perflo, verify identity, and reconcile one small manual payment.
+1. Dedicated Gmail test mailbox for real ingestion validation (not the owner's real inbox — see "Do not do" below).
+2. Only after KYC clears: connect Perflo, verify identity, and reconcile one small manual payment.
 
 Do not connect the Perflo "Connect an agent" screen or attempt a real payment to continue either of these — both are local-only.
 
@@ -232,7 +280,7 @@ More information is in `.env.example` for safe local configuration, `packages/db
 - Add OCR/image-only PDF detection that routes to review.
 - Add event/audit timeline storage.
 - Document the supported-currency boundary: current structured extraction is INR/USD; unsupported currencies require review.
-- Full edge-case pass over the demo scenarios (see "Exact next task" above).
+- Repeat the demo edge-case pass when changing classifier, extraction, resolver, verifier, or policy behavior.
 
 ## Work blocked or gated by KYC/Perflo access
 

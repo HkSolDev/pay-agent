@@ -152,7 +152,7 @@ const STATEMENT_PATTERN = /\bstatement\b|\baccount\s+summary\b|\bsummary\s+of\s+
 // just "there is a price mentioned somewhere". A brochure or catalog can
 // carry a price without any of this; a genuine invoice almost always has
 // at least one.
-const INVOICE_MARKER_PATTERN = /\binvoice\b|\btax\s+invoice\b|\bbill(?:ed)?\s+for\b|\bbill\s*(?:no\.?|number|#)\b|\binv\.?\s*(?:no\.?|number|#)\b|\bamount\s+(?:due|payable)\b|\btotal\s+(?:due|payable)\b|\bplease\s+find\s+attached\b|\bplease\s+remit\b|\bkindly\s+settle\b|\bpayment\s+terms\b|\bdue\s+date\b|\bGSTIN\b/i;
+const INVOICE_MARKER_PATTERN = /\binvoice\b|\btax\s+invoice\b|\brechnung\b|\bgesamtbetrag\b|\bbill(?:ed)?\s+for\b|\bbill\s*(?:no\.?|number|#)\b|\binv\.?\s*(?:no\.?|number|#)\b|\bamount\s+(?:due|payable)\b|\btotal\s+(?:due|payable)\b|\bplease\s+find\s+attached\b|\bplease\s+remit\b|\bkindly\s+settle\b|\bpayment\s+terms\b|\bdue\s+date\b|\bGSTIN\b/i;
 
 // A direct, imperative ask — the thing that actually distinguishes "please
 // pay me ₹500" from a product listing that merely mentions a price like
@@ -277,7 +277,10 @@ export function classifyEmail(input: ClassifierInput): ClassificationResult {
   const looksLikeInvoice = INVOICE_MARKER_PATTERN.test(text);
   const hasRequestLanguage = CASUAL_REQUEST_PATTERN.test(text);
 
-  if (looksLikeInvoice && hasAmount) {
+  // A formal invoice with a missing/unsupported amount, or a PDF invoice
+  // whose text could not be extracted, is still payable-shaped evidence.
+  // Preserve it for owner review instead of silently dropping it as junk.
+  if (looksLikeInvoice) {
     return {
       kind: "invoice",
       confidence: 0.9,

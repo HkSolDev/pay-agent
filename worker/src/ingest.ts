@@ -190,16 +190,29 @@ async function processInsertedEmails(deps: IngestDeps, gmailMessageIds: string[]
     select: processableEmailSelect,
   });
   if (rows.length === 0) return;
+  const sourceOrder = new Map(gmailMessageIds.map((messageId, index) => [messageId, index]));
+  rows.sort((a, b) => (sourceOrder.get(a.gmailMessageId) ?? 0) - (sourceOrder.get(b.gmailMessageId) ?? 0));
 
   const approvedPayees = await (deps.loadApprovedPayees?.() ?? Promise.resolve([]));
   const previousRows = await prisma.email.findMany({
     where: { level1ProcessedAt: { not: null } },
     select: { id: true, resolvedPayeeId: true, extractionSummary: true },
   });
-  const history = fingerprintsFromRows(previousRows);
+  let history = fingerprintsFromRows(previousRows);
   const extract = deps.extractPaymentDetails ?? extractWithSelectedBackend;
 
-  await Promise.all(rows.map((row) => processEmailRow(row, approvedPayees, history, extract)));
+  // Process this batch in source order so a second message in the same
+  // ingestion (notably the demo duplicate pair) can see the first message's
+  // resolved fingerprint. The database remains the source of truth for
+  // idempotent insertion; this only makes duplicate review deterministic.
+  for (const row of rows) {
+    await processEmailRow(row, approvedPayees, history, extract);
+    const processedRows = await prisma.email.findMany({
+      where: { level1ProcessedAt: { not: null } },
+      select: { id: true, resolvedPayeeId: true, extractionSummary: true },
+    });
+    history = fingerprintsFromRows(processedRows);
+  }
 }
 
 /** Processes rows explicitly queued for another review-only worker pass. */
