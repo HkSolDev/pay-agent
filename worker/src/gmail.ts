@@ -127,3 +127,66 @@ export async function fetchMessageById(messageId: string): Promise<GmailPart | u
   const data = (result as { data?: { payload?: GmailPart } }).data;
   return data?.payload;
 }
+
+/**
+ * Downloads one attachment's raw bytes. Confirmed live (via Composio's tool
+ * search, not docs) that GMAIL_GET_ATTACHMENT doesn't return the bytes
+ * directly — it returns a time-limited signed URL at `data.file.s3url` that
+ * has to be fetched separately. Treated as opaque: never modify the URL,
+ * per Composio's own guidance, or its signature breaks.
+ */
+export async function fetchAttachmentBytes(
+  messageId: string,
+  attachmentId: string,
+  filename: string,
+  maxBytes = 10 * 1024 * 1024,
+): Promise<Uint8Array> {
+  const session = await getSession();
+  const result = await session.execute("GMAIL_GET_ATTACHMENT", {
+    message_id: messageId,
+    attachment_id: attachmentId,
+    file_name: filename,
+  });
+  const file = (result as { data?: { file?: { s3url?: string } } }).data?.file;
+  if (!file?.s3url) {
+    throw new Error(`GMAIL_GET_ATTACHMENT returned no download URL for attachment ${attachmentId}.`);
+  }
+  const response = await fetch(file.s3url);
+  if (!response.ok) {
+    throw new Error(`Failed to download attachment ${attachmentId}: HTTP ${response.status}.`);
+  }
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new Error(`Attachment ${attachmentId} exceeds the ${maxBytes}-byte download limit.`);
+  }
+  if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > maxBytes) throw new Error(`Attachment ${attachmentId} exceeds the ${maxBytes}-byte download limit.`);
+    return bytes;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > maxBytes) {
+        await reader.cancel();
+        throw new Error(`Attachment ${attachmentId} exceeds the ${maxBytes}-byte download limit.`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}

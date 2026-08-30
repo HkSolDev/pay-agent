@@ -216,6 +216,59 @@ const cases: Array<{
     kind: "receipt",
     minimumConfidence: 0.85,
   },
+  {
+    name: "multi-line PDF text keeps an amount on the line after total due",
+    input: {
+      subject: "Invoice attached",
+      bodyText: `INVOICE #INV-2026-99
+Bill To: Hemant Kumar
+
+Summary of Charges:
+Consulting Services
+
+TOTAL AMOUNT DUE:
+₹15,000.00
+
+Payment Terms: Due upon receipt`,
+    },
+    kind: "invoice",
+    minimumConfidence: 0.9,
+  },
+  {
+    name: "tabular PDF invoice text with subtotal and GST is an invoice",
+    input: {
+      subject: "Invoice for Dev Work",
+      bodyText: `TAX INVOICE
+Item                         Qty    Rate       Amount
+Frontend UI Development       1     ₹10,000    ₹10,000
+API Integration               1     ₹5,000     ₹5,000
+Subtotal:                                    ₹15,000
+CGST (9%):                                  ₹1,350
+SGST (9%):                                  ₹1,350
+TOTAL PAYABLE:                              ₹17,700
+Bank Details: UPI developer@hdfcbank`,
+    },
+    kind: "invoice",
+    minimumConfidence: 0.9,
+  },
+  {
+    name: "multi-page PDF text with headers and footer noise is still an invoice",
+    input: {
+      subject: "Monthly bill",
+      bodyText: `Page 1 of 2
+Acme Consulting Pvt Ltd | GSTIN: 27AAAAA0000A1Z5
+Invoice No: INV-882
+Services Rendered: Infrastructure Setup; Database Architecture
+
+[PAGE BREAK]
+Page 2 of 2
+Total Due: ₹25,000
+Please transfer to: billing@okaxis
+Thank you for your business!`,
+    },
+    kind: "invoice",
+    minimumConfidence: 0.9,
+  },
 ];
 
 const ambiguousEmail: ClassifierInput = {

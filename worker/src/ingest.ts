@@ -1,8 +1,223 @@
 import { prisma } from "@perflo-ap-agent/db";
 import type { RawGmailMessage } from "./gmail.js";
-import { parseGmailPayload, toJsonSafeAttachments } from "./mime.js";
+import { fetchAttachmentBytes } from "./gmail.js";
+import { parseGmailPayload, toJsonSafeAttachments, type ParsedAttachment } from "./mime.js";
 import { shouldIgnoreInitialJunk } from "./junk-filter.js";
-import { classifyEmail } from "./classifier.js";
+import { classifyEmail, type ClassifierInput, type ClassificationResult } from "./classifier.js";
+import { classifyEmailWithLLM } from "./llm-classifier.js";
+import { extractPdfText } from "./pdf-extract.js";
+import { extractPaymentDetails, type ExtractionInput, type ExtractionResult } from "./extractor.js";
+import { extractPaymentDetailsWithLLM } from "./llm-extractor.js";
+import { processLevel1, type Level1PipelineResult } from "./level1-pipeline.js";
+import type { ApprovedPayee } from "./payee-resolver.js";
+import type { PayableFingerprint } from "./duplicate-detector.js";
+import { loadApprovedPayees } from "./payee-store.js";
+
+export const MAX_PDF_ATTACHMENTS_PER_EMAIL = 3;
+export const MAX_PDF_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
+export interface IngestDeps {
+  fetchAttachmentBytes: (messageId: string, attachmentId: string, filename: string, maxBytes?: number) => Promise<Uint8Array>;
+  extractPdfText: (bytes: Uint8Array) => Promise<string | null>;
+  classifyEmail: (input: ClassifierInput) => Promise<ClassificationResult>;
+  extractPaymentDetails?: (input: ExtractionInput) => Promise<ExtractionResult>;
+  loadApprovedPayees?: () => Promise<ApprovedPayee[]>;
+}
+
+// Safety switch, opt-IN not opt-out: the free rule-based classifier runs
+// unless CLASSIFIER_MODE=llm is explicitly set. Checked at call time (not
+// baked in at import), so flipping the env var and restarting the worker —
+// e.g. rule-based for everyday local testing, "llm" right before a demo —
+// takes effect without any code change.
+export async function classifyWithSelectedBackend(input: ClassifierInput): Promise<ClassificationResult> {
+  if (process.env.CLASSIFIER_MODE === "llm") {
+    return classifyEmailWithLLM(input);
+  }
+  return classifyEmail(input);
+}
+
+// Like classification, LLM extraction is explicitly opt-in. The default is
+// deterministic extraction, so an env/config mistake cannot consume API
+// credit or change a review decision during local development.
+export async function extractWithSelectedBackend(input: ExtractionInput): Promise<ExtractionResult> {
+  if (process.env.EXTRACTOR_MODE === "llm") return extractPaymentDetailsWithLLM(input);
+  return extractPaymentDetails(input);
+}
+
+const defaultDeps: IngestDeps = {
+  fetchAttachmentBytes,
+  extractPdfText,
+  classifyEmail: classifyWithSelectedBackend,
+  loadApprovedPayees,
+};
+
+function authFromJson(value: unknown): { dmarc: string | null; spf: string | null; dkim: string | null } {
+  const auth = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  return {
+    dmarc: typeof auth.dmarc === "string" ? auth.dmarc : null,
+    spf: typeof auth.spf === "string" ? auth.spf : null,
+    dkim: typeof auth.dkim === "string" ? auth.dkim : null,
+  };
+}
+
+function linksFromJson(value: unknown): Array<{ href: string; finalDomain: string; visibleText: string }> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const link = item as Record<string, unknown>;
+    if (typeof link.href !== "string") return [];
+    let finalDomain = "";
+    try { finalDomain = new URL(link.href).hostname; } catch { /* suspicious non-URL is not a usable payment link */ }
+    return [{ href: link.href, finalDomain, visibleText: typeof link.text === "string" ? link.text : "" }];
+  });
+}
+
+function fingerprintsFromRows(rows: Array<{ id: string; resolvedPayeeId: string | null; extractionSummary: unknown }>): PayableFingerprint[] {
+  return rows.flatMap((row) => {
+    if (!row.resolvedPayeeId || !row.extractionSummary || typeof row.extractionSummary !== "object") return [];
+    const summary = row.extractionSummary as Record<string, unknown>;
+    const amount = summary.amount;
+    const safeAmount = amount && typeof amount === "object" && typeof (amount as Record<string, unknown>).currency === "string"
+      && typeof (amount as Record<string, unknown>).value === "string"
+      ? { currency: (amount as Record<string, string>).currency, value: (amount as Record<string, string>).value }
+      : null;
+    return [{
+      emailId: row.id,
+      payeeId: row.resolvedPayeeId,
+      referenceNumber: typeof summary.referenceNumber === "string" ? summary.referenceNumber : null,
+      referenceIsFallback: summary.referenceIsFallback === true,
+      amount: safeAmount,
+    }];
+  });
+}
+
+// Raw payment rails are intentionally omitted from this derived summary.
+// The source email body is retained separately for audit/review; derived
+// account/VPA fields live only transiently or in encrypted payee storage.
+function extractionSummary(extraction: ExtractionResult) {
+  return {
+    payeeName: extraction.payeeName,
+    payeeNameConfidence: extraction.payeeNameConfidence,
+    amount: extraction.amount,
+    amountConfidence: extraction.amountConfidence,
+    referenceNumber: extraction.referenceNumber,
+    referenceNumberConfidence: extraction.referenceNumberConfidence,
+    referenceIsFallback: extraction.referenceNumberConfidence > 0 && extraction.referenceNumberConfidence < 0.85,
+    paymentMethodKinds: extraction.paymentMethods.map((method) => method.kind),
+    paymentMethodCount: extraction.paymentMethods.length,
+    paymentMethodConfidence: extraction.paymentMethodConfidence,
+    issueDate: extraction.issueDate,
+    issueDateConfidence: extraction.issueDateConfidence,
+    dueDate: extraction.dueDate,
+    dueDateConfidence: extraction.dueDateConfidence,
+  };
+}
+
+// Prisma's JSON input types require an index signature even for plain,
+// JSON-safe TypeScript interfaces. A serialize/parse boundary also ensures
+// no Date, Buffer, or prototype-bearing object is ever written as evidence.
+function jsonForStorage(value: unknown): ReturnType<typeof JSON.parse> {
+  return JSON.parse(JSON.stringify(value));
+}
+
+async function processInsertedEmails(deps: IngestDeps, gmailMessageIds: string[]): Promise<void> {
+  const rows = await prisma.email.findMany({
+    where: { gmailMessageId: { in: gmailMessageIds }, level1ProcessedAt: null },
+    select: {
+      id: true, gmailMessageId: true, fromAddr: true, fromName: true, subject: true, bodyText: true, replyTo: true,
+      auth: true, links: true, classification: true, classificationConfidence: true, classificationRationale: true,
+      injectionDetected: true, injectionEvidence: true,
+    },
+  });
+  if (rows.length === 0) return;
+
+  const approvedPayees = await (deps.loadApprovedPayees?.() ?? Promise.resolve([]));
+  const previousRows = await prisma.email.findMany({
+    where: { level1ProcessedAt: { not: null } },
+    select: { id: true, resolvedPayeeId: true, extractionSummary: true },
+  });
+  const history = fingerprintsFromRows(previousRows);
+  const extract = deps.extractPaymentDetails ?? extractWithSelectedBackend;
+
+  await Promise.all(rows.map(async (row) => {
+    const kind = row.classification ?? "unrelated";
+    const result: Level1PipelineResult = await processLevel1({
+      emailId: row.id,
+      extractionInput: { kind: kind as ExtractionInput["kind"], injectionDetected: row.injectionDetected, subject: row.subject, bodyText: row.bodyText, fromName: row.fromName, fromAddr: row.fromAddr },
+      classification: {
+        kind: kind as ClassificationResult["kind"],
+        confidence: row.classificationConfidence ?? 0,
+        rationale: row.classificationRationale ?? "No classifier result.",
+        injectionDetected: row.injectionDetected,
+        injectionEvidence: Array.isArray(row.injectionEvidence) ? row.injectionEvidence.filter((item): item is string => typeof item === "string") : [],
+      },
+      auth: authFromJson(row.auth),
+      replyTo: row.replyTo,
+      links: linksFromJson(row.links),
+      approvedPayees,
+      duplicateHistory: history,
+    }, extract);
+
+    await prisma.email.update({
+      where: { id: row.id },
+      data: {
+        extractionSummary: jsonForStorage(extractionSummary(result.extraction)),
+        extractionBackend: process.env.EXTRACTOR_MODE === "llm" ? "llm" : "deterministic",
+        resolvedPayeeId: result.resolution.status === "resolved" ? result.resolution.payeeId : null,
+        payeeResolution: jsonForStorage(result.resolution),
+        verificationResult: jsonForStorage(result.verification),
+        duplicateResult: jsonForStorage(result.duplicate),
+        policyDecision: result.decision,
+        policyReasons: result.reasons,
+        level1ProcessedAt: new Date(),
+      },
+    });
+  }));
+}
+
+function isPdfAttachment(attachment: ParsedAttachment): boolean {
+  return attachment.mimeType === "application/pdf" || attachment.filename.toLowerCase().endsWith(".pdf");
+}
+
+/**
+ * Downloads and extracts text from every PDF attachment on a message,
+ * appended to the parsed body text so the classifier can see what's inside
+ * a PDF invoice, not just what's in the email itself. A failure on any one
+ * attachment (corrupted PDF, expired download link, network error) is
+ * logged and skipped — it must never block ingestion of the rest of the
+ * email or the batch; the email still gets ingested with whatever text it
+ * does have.
+ */
+async function appendPdfText(
+  messageId: string,
+  bodyText: string | null,
+  attachments: ParsedAttachment[],
+  deps: IngestDeps,
+): Promise<string | null> {
+  const sections = bodyText ? [bodyText] : [];
+  let fetchedPdfCount = 0;
+  for (const attachment of attachments) {
+    if (!isPdfAttachment(attachment) || !attachment.attachmentId) continue;
+    if (fetchedPdfCount >= MAX_PDF_ATTACHMENTS_PER_EMAIL) {
+      console.warn(`Skipping PDF attachment "${attachment.filename}" on message ${messageId}: attachment-count limit reached.`);
+      continue;
+    }
+    if (attachment.size > MAX_PDF_ATTACHMENT_BYTES) {
+      console.warn(`Skipping PDF attachment "${attachment.filename}" on message ${messageId}: exceeds size limit.`);
+      continue;
+    }
+    fetchedPdfCount += 1;
+    try {
+      const bytes = await deps.fetchAttachmentBytes(messageId, attachment.attachmentId, attachment.filename, MAX_PDF_ATTACHMENT_BYTES);
+      const text = await deps.extractPdfText(bytes);
+      if (text) sections.push(`--- ${attachment.filename} ---\n${text}`);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error(`PDF extraction failed for "${attachment.filename}" on message ${messageId}: ${reason}`);
+    }
+  }
+  return sections.length > 0 ? sections.join("\n\n") : null;
+}
 
 // Turns "Riya Sharma <riya@example.com>" into { name, email }.
 // Plenty of real headers are just "riya@example.com" with no display name — handle both.
@@ -24,10 +239,10 @@ function parseAddress(raw: string | undefined): { name: string | null; email: st
  * per message — same principle FR-23's idempotency key uses later for
  * payments: the DB constraint is the source of truth, not application logic.
  */
-export async function ingestGmailMessages(messages: RawGmailMessage[]) {
+export async function ingestGmailMessages(messages: RawGmailMessage[], deps: IngestDeps = defaultDeps) {
   if (messages.length === 0) return { inserted: 0, skipped: 0 };
 
-  const rows = messages.map((m) => {
+  const rows = await Promise.all(messages.map(async (m) => {
     const from = parseAddress(m.headers["From"]);
     const toAddrs = (m.headers["To"] ?? "")
       .split(",")
@@ -46,11 +261,20 @@ export async function ingestGmailMessages(messages: RawGmailMessage[]) {
       hasAttachments: content.attachments.length > 0,
       isCalendarInvite: content.hasCalendarInvite,
     });
+
+    // Only fetched for messages that survived the junk filter — a PDF
+    // attached to an obvious newsletter isn't worth a Composio call and a
+    // parse. This is what the stored row AND the classifier both see, so a
+    // PDF invoice with no text in the email body itself is still visible.
+    const bodyText = isJunk
+      ? content.bodyText
+      : await appendPdfText(m.messageId, content.bodyText, content.attachments, deps);
+
     const classification = isJunk
       ? null
-      : classifyEmail({
+      : await deps.classifyEmail({
           subject: m.subject,
-          bodyText: content.bodyText,
+          bodyText,
           fromName: from.name,
           fromAddr: from.email,
           hasAttachments: content.attachments.length > 0,
@@ -67,14 +291,19 @@ export async function ingestGmailMessages(messages: RawGmailMessage[]) {
       date: new Date(m.messageTimestamp),
       subject: m.subject,
       rawHeaders: m.headers,
-      bodyText: content.bodyText,
+      bodyText,
       bodyHtmlHash: content.bodyHtmlHash,
       attachments: attachmentMetadata,
       links: content.links,
+      // Each mechanism's whole clause (through the next `;`), not just the
+      // 8-character "spf=pass" fragment a narrower match would give —
+      // worker/src/verifier.ts needs the domain attribution that comes
+      // after the pass/fail token (smtp.mailfrom=/header.from=/header.d=)
+      // to check alignment, which a bare "spf=pass" can't provide at all.
       auth: {
-        spf: m.headers["Authentication-Results"]?.match(/spf=\w+/i)?.[0] ?? null,
-        dkim: m.headers["Authentication-Results"]?.match(/dkim=\w+/i)?.[0] ?? null,
-        dmarc: m.headers["Authentication-Results"]?.match(/dmarc=\w+/i)?.[0] ?? null,
+        spf: m.headers["Authentication-Results"]?.match(/spf=[^;]+/i)?.[0]?.trim() ?? null,
+        dkim: m.headers["Authentication-Results"]?.match(/dkim=[^;]+/i)?.[0]?.trim() ?? null,
+        dmarc: m.headers["Authentication-Results"]?.match(/dmarc=[^;]+/i)?.[0]?.trim() ?? null,
       },
       gmailLabels: m.labelIds,
       classification: isJunk ? "ignored" : classification?.kind ?? null,
@@ -83,12 +312,17 @@ export async function ingestGmailMessages(messages: RawGmailMessage[]) {
       injectionDetected: classification?.injectionDetected ?? false,
       injectionEvidence: classification?.injectionEvidence ?? [],
     };
-  });
+  }));
 
   const result = await prisma.email.createMany({
     data: rows,
     skipDuplicates: true,
   });
+
+  // Persist evaluation only after the immutable source row exists. A retry
+  // after a crash picks up rows with level1ProcessedAt=NULL without ever
+  // re-downloading Gmail content or creating another email record.
+  await processInsertedEmails(deps, rows.map((row) => row.gmailMessageId));
 
   return { inserted: result.count, skipped: rows.length - result.count };
 }
