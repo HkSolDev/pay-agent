@@ -34,6 +34,13 @@ function payoutFailureReason(payout: Record<string, unknown>): string | undefine
   return typeof description === "string" ? description : undefined;
 }
 
+// Thrown by `call()` only when RazorpayX actually answered with a non-2xx
+// response — as opposed to the request never getting a response at all
+// (network failure/timeout). That distinction is what separates a definite,
+// safe-to-retry failure from a genuine unknown-outcome (see the two catch
+// blocks in createPayout below).
+class RazorpayHttpError extends Error {}
+
 type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body?: string }) => Promise<{
   ok: boolean;
   status: number;
@@ -81,7 +88,7 @@ export function createRazorpayExecutor(config: RazorpayExecutorConfig): PaymentE
     });
     const json = (await response.json()) as Record<string, unknown>;
     if (!response.ok) {
-      throw new Error(`RazorpayX ${path} returned ${response.status}: ${JSON.stringify(json)}`);
+      throw new RazorpayHttpError(`RazorpayX ${path} returned ${response.status}: ${JSON.stringify(json)}`);
     }
     return json;
   }
@@ -113,6 +120,7 @@ export function createRazorpayExecutor(config: RazorpayExecutorConfig): PaymentE
         };
       }
 
+      let fundAccount: Record<string, unknown>;
       try {
         const contact = await call("/v1/contacts", {
           name: request.recipientName,
@@ -135,8 +143,21 @@ export function createRazorpayExecutor(config: RazorpayExecutorConfig): PaymentE
                   account_number: request.destination.accountNumber,
                 },
               };
-        const fundAccount = await call("/v1/fund_accounts", fundAccountBody);
+        fundAccount = await call("/v1/fund_accounts", fundAccountBody);
+      } catch (error) {
+        // Nothing has been sent to /v1/payouts yet — whatever went wrong here
+        // (a rejected request like a bad IFSC, or a network failure reaching
+        // Razorpay), no payout could possibly have been created. Always safe
+        // to mark "failed" and let the owner retry, e.g. after fixing the
+        // payee's saved bank details.
+        return {
+          providerReference: request.idempotencyKey,
+          status: "failed",
+          failureReason: error instanceof Error ? error.message : String(error),
+        };
+      }
 
+      try {
         // amountMinor is already an integer in paise/cents — the interface
         // never carries a decimal rupee value, so there is no `* 100` step
         // (and no floating-point rounding risk) here.
@@ -152,6 +173,11 @@ export function createRazorpayExecutor(config: RazorpayExecutorConfig): PaymentE
             mode: request.rail === "upi" ? "UPI" : "NEFT",
             purpose: "payout",
             queue_if_low_balance: true,
+            // Our own idempotency key, echoed back on every fetch of this
+            // payout — lets a future reconciliation job find it by a value
+            // we already have, even if we never captured payout.id (e.g. the
+            // response was lost after Razorpay had already accepted it).
+            reference_id: request.idempotencyKey,
           },
           { "X-Payout-Idempotency": request.idempotencyKey },
         );
@@ -162,10 +188,16 @@ export function createRazorpayExecutor(config: RazorpayExecutorConfig): PaymentE
           ...(payoutFailureReason(payout) ? { failureReason: payoutFailureReason(payout) } : {}),
         };
       } catch (error) {
-        // A network failure/timeout partway through the sequence means we
-        // cannot tell whether RazorpayX already accepted the payout before
-        // we lost the response — never resolve this to "failed" (that would
-        // invite a caller to safely retry a payout that may have landed).
+        if (error instanceof RazorpayHttpError) {
+          // RazorpayX answered the payout request itself with a definite
+          // rejection (e.g. a validation error) — no payout was created, so
+          // this is exactly as safe to retry as a pre-payout failure above.
+          return { providerReference: request.idempotencyKey, status: "failed", failureReason: error.message };
+        }
+        // A network failure/timeout with no response at all means we cannot
+        // tell whether RazorpayX already accepted the payout before we lost
+        // the response — never resolve this to "failed" (that would invite a
+        // caller to safely retry a payout that may have landed).
         return {
           providerReference: request.idempotencyKey,
           status: "unknown",

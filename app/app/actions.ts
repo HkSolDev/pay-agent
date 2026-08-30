@@ -12,7 +12,7 @@ import { createRazorpayExecutor } from "../../worker/src/payment-executor-razorp
 import { payoutResultToLegacyPayResult } from "../../worker/src/payment-executor-adapter";
 import { decimalStringToMinorUnits } from "../../worker/src/payment-amount";
 import { loadApprovedPayees } from "../../worker/src/payee-store";
-import { PaymentUnknownOutcomeError } from "../../worker/src/payment-executor";
+import { PaymentDefiniteFailure, PaymentUnknownOutcomeError } from "../../worker/src/payment-executor";
 import { paymentMethodToPayoutDestination } from "../../worker/src/payment-executor-destination";
 
 export async function preparePayment(formData: FormData) {
@@ -143,9 +143,15 @@ export async function confirmPayment(emailId: string, _formData: FormData): Prom
     // one happened, not a generic "Failed" for both (PRD FR-27 treats
     // NOT_CONNECTED/NO_SESSION/SIGNER_REVOKED as needing a clear alert).
     const lastError = err instanceof Error ? err.message : String(err);
+    // Carry the provider's own reference through even on failure/unknown —
+    // previously this was dropped entirely, so a payout stuck at
+    // unknown_outcome had no way to later look up what actually happened to
+    // it at the provider (see payment-executor.ts's error classes).
+    const providerReference =
+      err instanceof PaymentUnknownOutcomeError || err instanceof PaymentDefiniteFailure ? err.providerReference : undefined;
     await prisma.paymentIntent.updateMany({
       where: { emailId, status: "claimed" },
-      data: { status, lastError },
+      data: { status, lastError, ...(providerReference ? { paymentReference: providerReference } : {}) },
     });
     revalidatePath("/");
     throw err;

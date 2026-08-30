@@ -16,7 +16,10 @@ export function payoutResultToLegacyPayResult(result: PayoutResult): { paymentRe
     return { paymentReference: result.providerReference };
   }
   if (result.status === "failed") {
-    throw new PaymentDefiniteFailure(result.failureReason ?? "Payment failed.");
+    throw new PaymentDefiniteFailure(result.failureReason ?? "Payment failed.", result.providerReference);
   }
-  throw new PaymentUnknownOutcomeError(result.failureReason ?? `Payout outcome unknown (status: ${result.status}).`);
+  throw new PaymentUnknownOutcomeError(
+    result.failureReason ?? `Payout outcome unknown (status: ${result.status}).`,
+    result.providerReference,
+  );
 }
