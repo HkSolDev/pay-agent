@@ -53,9 +53,12 @@ describe("reconcileStuckPayments", () => {
     await makeIntent("reconcile-test-1", { status: "unknown_outcome", paymentReference: "pout_1" });
     const executor = fakeExecutor({ pout_1: { providerReference: "pout_1", status: "paid" } });
 
+    // Asserts on `updated`, not `checked` — the shared dev database can
+    // legitimately hold other unknown_outcome rows (real usage, other
+    // tests) that this run also counts as "checked" without touching.
     const summary = await reconcileStuckPayments(executor);
 
-    expect(summary).toEqual({ checked: 1, updated: 1 });
+    expect(summary.updated).toBe(1);
     const row = await prisma.paymentIntent.findUniqueOrThrow({ where: { emailId: "reconcile-test-1" } });
     expect(row.status).toBe("paid");
     expect(row.paidAt).not.toBeNull();
@@ -70,7 +73,7 @@ describe("reconcileStuckPayments", () => {
 
     const summary = await reconcileStuckPayments(executor);
 
-    expect(summary).toEqual({ checked: 1, updated: 1 });
+    expect(summary.updated).toBe(1);
     const row = await prisma.paymentIntent.findUniqueOrThrow({ where: { emailId: "reconcile-test-2" } });
     expect(row.status).toBe("failed");
     expect(row.lastError).toBe("beneficiary bank rejected");
@@ -82,7 +85,7 @@ describe("reconcileStuckPayments", () => {
 
     const summary = await reconcileStuckPayments(executor);
 
-    expect(summary).toEqual({ checked: 1, updated: 0 });
+    expect(summary.updated).toBe(0);
     const row = await prisma.paymentIntent.findUniqueOrThrow({ where: { emailId: "reconcile-test-3" } });
     expect(row.status).toBe("unknown_outcome");
   });
@@ -93,12 +96,17 @@ describe("reconcileStuckPayments", () => {
 
     const summary = await reconcileStuckPayments(executor);
 
-    expect(summary).toEqual({ checked: 1, updated: 0 });
+    expect(summary.updated).toBe(0);
     const row = await prisma.paymentIntent.findUniqueOrThrow({ where: { emailId: "reconcile-test-4" } });
     expect(row.status).toBe("unknown_outcome");
   });
 
   it("never touches a claimed, pending, paid, or already-failed row", async () => {
+    // Asserts on these specific rows, not the summary's global counts — the
+    // table can legitimately hold other unknown_outcome rows from elsewhere
+    // (real usage, other tests) that this run should also pick up; the
+    // guarantee this test exists to prove is narrower: these four rows in
+    // particular are never touched, not that nothing else in the table is.
     await makeIntent("reconcile-test-5", { status: "claimed", paymentReference: null });
     await makeIntent("reconcile-test-6", { status: "pending" });
     await makeIntent("reconcile-test-7", { status: "paid", paymentReference: "pout_7" });
@@ -108,8 +116,17 @@ describe("reconcileStuckPayments", () => {
       pout_8: { providerReference: "pout_8", status: "failed" },
     });
 
-    const summary = await reconcileStuckPayments(executor);
+    await reconcileStuckPayments(executor);
 
-    expect(summary).toEqual({ checked: 0, updated: 0 });
+    const rows = await prisma.paymentIntent.findMany({
+      where: { emailId: { in: ["reconcile-test-5", "reconcile-test-6", "reconcile-test-7", "reconcile-test-8"] } },
+      orderBy: { emailId: "asc" },
+    });
+    expect(rows.map((r) => [r.emailId, r.status])).toEqual([
+      ["reconcile-test-5", "claimed"],
+      ["reconcile-test-6", "pending"],
+      ["reconcile-test-7", "paid"],
+      ["reconcile-test-8", "failed"],
+    ]);
   });
 });
