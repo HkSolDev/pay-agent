@@ -1,12 +1,12 @@
+import { normalizePaymentMethod, type PaymentMethod } from "./payment-method-validation.js";
+
 // FR-15 through FR-17's payee resolution, as a pure decision function — the
 // same reasoning as the rule-based classifier and policy engine: testable
 // without a database at all. The actual DB read (decrypting stored payment
 // methods into plain values, per worker/src/payee-crypto.ts) happens in a
 // separate loader that calls this; this function never touches Prisma.
 
-export type PaymentMethod =
-  | { kind: "upi"; vpa: string }
-  | { kind: "bank_neft"; accountNumber: string; ifsc: string; beneficiaryName?: string };
+export type { PaymentMethod } from "./payment-method-validation.js";
 
 export interface ApprovedPayee {
   payeeId: string;
@@ -26,18 +26,14 @@ export type ResolveResult =
   | { status: "details_changed"; payeeId: string; priorNickname: string } // FR-16/FR-20: needs_approval, not quarantine
   | { status: "unknown_sender"; payeeId: string; knownNickname: string } // FR-17
   | { status: "identity_method_conflict"; senderPayeeId: string; methodPayeeId: string } // sender belongs to one payee, method to a different one
+  | { status: "multiple_payment_methods" } // never choose a rail on the owner's behalf
   | { status: "invalid_payment_method" };
 
-const VPA_PATTERN = /^[\w.\-]+@[\w.\-]+$/;
-const IFSC_PATTERN = /^[A-Z]{4}0[A-Z0-9]{6}$/;
-
 function normalizeMethod(method: PaymentMethod): string | null {
-  if (method.kind === "upi") {
-    if (!VPA_PATTERN.test(method.vpa)) return null;
-    return `upi:${method.vpa.toLowerCase()}`;
-  }
-  if (!method.accountNumber || !IFSC_PATTERN.test(method.ifsc.toUpperCase())) return null;
-  return `bank_neft:${method.accountNumber}:${method.ifsc.toUpperCase()}`;
+  const normalized = normalizePaymentMethod(method);
+  if (!normalized) return null;
+  if (normalized.kind === "upi") return `upi:${normalized.vpa}`;
+  return `bank_neft:${normalized.accountNumber}:${normalized.ifsc}`;
 }
 
 export function resolvePayee(request: ResolveRequest, approved: ApprovedPayee[]): ResolveResult {

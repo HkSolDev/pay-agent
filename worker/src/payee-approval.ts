@@ -1,4 +1,5 @@
 import type { PaymentMethod } from "./payee-resolver.js";
+import { validatePaymentMethod } from "./payment-method-validation.js";
 
 export interface GrantRequest {
   perPaymentCapInr: string;
@@ -27,8 +28,7 @@ function validPositiveMoney(value: string): boolean {
 }
 
 function validPaymentMethod(method: PaymentMethod): boolean {
-  if (method.kind === "upi") return /^[\w.-]+@[\w.-]+$/.test(method.vpa);
-  return /^\d{9,18}$/.test(method.accountNumber) && /^[A-Z]{4}0[A-Z0-9]{6}$/i.test(method.ifsc);
+  return validatePaymentMethod(method);
 }
 
 function validRequest(request: ApprovePayeeRequest): boolean {

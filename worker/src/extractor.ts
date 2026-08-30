@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ClassificationKind } from "./classifier.js";
+import { normalizePaymentMethod, type PaymentMethod } from "./payment-method-validation.js";
 
 // FR-10 through FR-13: pulls the actual payable fields out of an email
 // already classified as invoice/payment_request/reminder. Every field
@@ -13,19 +14,7 @@ export interface ExtractedAmount {
   currency: "INR" | "USD";
 }
 
-export interface UpiPaymentMethod {
-  kind: "upi";
-  vpa: string;
-}
-
-export interface BankPaymentMethod {
-  kind: "bank_neft";
-  accountNumber: string;
-  ifsc: string;
-  beneficiaryName?: string;
-}
-
-export type PaymentMethod = UpiPaymentMethod | BankPaymentMethod;
+export type { PaymentMethod } from "./payment-method-validation.js";
 
 // The classifier's own output feeds straight into this input — the
 // extractor re-checks `kind` and `injectionDetected` itself and refuses to
@@ -194,12 +183,6 @@ const IFSC_PATTERN = /\b([A-Z]{4}0[A-Z0-9]{6})\b/;
 const ACCOUNT_NUMBER_PATTERN = /\b(?:a\/?c|account)(?:\s*(?:no\.?|number))?\s*:?\s*(\d{9,18})\b/i;
 const BENEFICIARY_NAME_PATTERN = /\bbeneficiary(?:\s*name)?\s*:?\s*([A-Za-z][A-Za-z .]{1,60})/i;
 
-// Common email/webmail domains that are never UPI PSP handles, so a plain
-// email address in the body doesn't get mistaken for a VPA.
-const NON_UPI_EMAIL_DOMAINS = new Set([
-  "gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "icloud.com", "example.com",
-]);
-
 interface PaymentMethodExtraction {
   methods: PaymentMethod[];
   confidence: number;
@@ -210,8 +193,9 @@ function extractPaymentMethods(text: string): PaymentMethodExtraction {
   let confidence = 0;
 
   const vpaMatch = text.match(VPA_PATTERN);
-  if (vpaMatch && !NON_UPI_EMAIL_DOMAINS.has(vpaMatch[2].toLowerCase())) {
-    methods.push({ kind: "upi", vpa: `${vpaMatch[1]}@${vpaMatch[2]}`.toLowerCase() });
+  const upi = vpaMatch && normalizePaymentMethod({ kind: "upi", vpa: `${vpaMatch[1]}@${vpaMatch[2]}` });
+  if (upi?.kind === "upi") {
+    methods.push(upi);
     confidence = Math.max(confidence, 0.9);
   }
 
@@ -222,13 +206,16 @@ function extractPaymentMethods(text: string): PaymentMethodExtraction {
   const accountMatch = text.match(ACCOUNT_NUMBER_PATTERN);
   const beneficiaryMatch = text.match(BENEFICIARY_NAME_PATTERN);
   if (ifscMatch && accountMatch) {
-    methods.push({
+    const bank = normalizePaymentMethod({
       kind: "bank_neft",
       accountNumber: accountMatch[1],
       ifsc: ifscMatch[1].toUpperCase(),
       ...(beneficiaryMatch ? { beneficiaryName: beneficiaryMatch[1].trim() } : {}),
     });
-    confidence = Math.max(confidence, 0.9);
+    if (bank?.kind === "bank_neft") {
+      methods.push(bank);
+      confidence = Math.max(confidence, 0.9);
+    }
   }
 
   return { methods, confidence };
