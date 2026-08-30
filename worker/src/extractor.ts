@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ClassificationKind } from "./classifier.js";
 
 // FR-10 through FR-13: pulls the actual payable fields out of an email
@@ -11,6 +12,20 @@ export interface ExtractedAmount {
   value: string;
   currency: "INR" | "USD";
 }
+
+export interface UpiPaymentMethod {
+  kind: "upi";
+  vpa: string;
+}
+
+export interface BankPaymentMethod {
+  kind: "bank_neft";
+  accountNumber: string;
+  ifsc: string;
+  beneficiaryName?: string;
+}
+
+export type PaymentMethod = UpiPaymentMethod | BankPaymentMethod;
 
 // The classifier's own output feeds straight into this input — the
 // extractor re-checks `kind` and `injectionDetected` itself and refuses to
@@ -35,6 +50,12 @@ export interface ExtractionResult {
   amountConfidence: number;
   referenceNumber: string | null;
   referenceNumberConfidence: number;
+  paymentMethods: PaymentMethod[];
+  paymentMethodConfidence: number;
+  issueDate: string | null;
+  issueDateConfidence: number;
+  dueDate: string | null;
+  dueDateConfidence: number;
 }
 
 // A fully empty result — returned, never thrown, when this function refuses
@@ -49,6 +70,12 @@ function emptyResult(): ExtractionResult {
     amountConfidence: 0,
     referenceNumber: null,
     referenceNumberConfidence: 0,
+    paymentMethods: [],
+    paymentMethodConfidence: 0,
+    issueDate: null,
+    issueDateConfidence: 0,
+    dueDate: null,
+    dueDateConfidence: 0,
   };
 }
 
@@ -157,6 +184,56 @@ function extractAmount(text: string): AmountExtraction {
   };
 }
 
+// --- Payment methods (FR-12) ------------------------------------------
+
+// handle@psp — syntactic only. Lower-cased for comparison, since a VPA is
+// not case-sensitive but a stray uppercase letter shouldn't create a
+// separate identity from the same handle written in lowercase.
+const VPA_PATTERN = /\b([\w.\-]{2,})@([a-zA-Z][\w.\-]{1,})\b/;
+const IFSC_PATTERN = /\b([A-Z]{4}0[A-Z0-9]{6})\b/;
+const ACCOUNT_NUMBER_PATTERN = /\b(?:a\/?c|account)(?:\s*(?:no\.?|number))?\s*:?\s*(\d{9,18})\b/i;
+const BENEFICIARY_NAME_PATTERN = /\bbeneficiary(?:\s*name)?\s*:?\s*([A-Za-z][A-Za-z .]{1,60})/i;
+
+// Common email/webmail domains that are never UPI PSP handles, so a plain
+// email address in the body doesn't get mistaken for a VPA.
+const NON_UPI_EMAIL_DOMAINS = new Set([
+  "gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "icloud.com", "example.com",
+]);
+
+interface PaymentMethodExtraction {
+  methods: PaymentMethod[];
+  confidence: number;
+}
+
+function extractPaymentMethods(text: string): PaymentMethodExtraction {
+  const methods: PaymentMethod[] = [];
+  let confidence = 0;
+
+  const vpaMatch = text.match(VPA_PATTERN);
+  if (vpaMatch && !NON_UPI_EMAIL_DOMAINS.has(vpaMatch[2].toLowerCase())) {
+    methods.push({ kind: "upi", vpa: `${vpaMatch[1]}@${vpaMatch[2]}`.toLowerCase() });
+    confidence = Math.max(confidence, 0.9);
+  }
+
+  // A bank transfer needs BOTH the account number and a valid IFSC to be
+  // usable at all — an account number alone, or an IFSC alone, isn't
+  // enough to actually route a payment, so neither counts on its own.
+  const ifscMatch = text.match(IFSC_PATTERN);
+  const accountMatch = text.match(ACCOUNT_NUMBER_PATTERN);
+  const beneficiaryMatch = text.match(BENEFICIARY_NAME_PATTERN);
+  if (ifscMatch && accountMatch) {
+    methods.push({
+      kind: "bank_neft",
+      accountNumber: accountMatch[1],
+      ifsc: ifscMatch[1].toUpperCase(),
+      ...(beneficiaryMatch ? { beneficiaryName: beneficiaryMatch[1].trim() } : {}),
+    });
+    confidence = Math.max(confidence, 0.9);
+  }
+
+  return { methods, confidence };
+}
+
 // --- Reference / invoice number ----------------------------------------
 
 const REFERENCE_PATTERN = /\b(?:invoice|inv|bill)\.?\s*(?:no\.?|number|#)?\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9\-\/]{2,20})/gi;
@@ -172,6 +249,51 @@ function extractReference(text: string): { value: string | null; confidence: num
     if (/\d/.test(match[1])) found = match[1];
   }
   return found ? { value: found, confidence: 0.85 } : { value: null, confidence: 0 };
+}
+
+// FR-10's fallback: "invoice number, or failing that a hash of payee +
+// amount + date". Deliberately grouping/display use only, at a confidence
+// below an explicit invoice number — NEVER wired into a payment
+// idempotency key (FR-23 already defines that separately, keyed on
+// gmail_message_id; a recurring bill with the same payee/amount/date would
+// collide here on its own).
+function fallbackReference(payeeName: string, amount: string, date: string): { value: string; confidence: number } {
+  const hash = createHash("sha256").update(`${payeeName}|${amount}|${date}`).digest("hex").slice(0, 16);
+  return { value: hash, confidence: 0.6 };
+}
+
+// --- Dates ---------------------------------------------------------------
+
+// Deliberately no D/M/Y slash pattern — "05/09/2026" is ambiguous (5 Sept
+// or May 9) and there's no way to tell which without knowing the source's
+// locale. Same "never guess" principle as amount/currency: only formats
+// that are unambiguous regardless of locale (a month name, or ISO
+// YYYY-MM-DD) get extracted.
+const DATE_PATTERNS = [
+  /\b(\d{1,2}\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4})\b/i,
+  /\b(\d{4}-\d{2}-\d{2})\b/,
+];
+
+function findDateAfterLabel(text: string, label: RegExp): string | null {
+  const labelMatch = text.match(label);
+  if (!labelMatch) return null;
+  const rest = text.slice(labelMatch.index! + labelMatch[0].length, labelMatch.index! + labelMatch[0].length + 40);
+  for (const pattern of DATE_PATTERNS) {
+    const m = rest.match(pattern);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+function extractDates(text: string): { issueDate: string | null; issueDateConfidence: number; dueDate: string | null; dueDateConfidence: number } {
+  const dueDate = findDateAfterLabel(text, /\bdue\s*(?:date)?\s*:?/i);
+  const issueDate = findDateAfterLabel(text, /\b(?:invoice\s*)?date\s*:?/i);
+  return {
+    issueDate,
+    issueDateConfidence: issueDate ? 0.9 : 0,
+    dueDate,
+    dueDateConfidence: dueDate ? 0.9 : 0,
+  };
 }
 
 // --- Payee name ----------------------------------------------------------
@@ -216,7 +338,14 @@ export async function extractPaymentDetails(input: ExtractionInput): Promise<Ext
 
   const payee = extractPayee(text, input.fromName);
   const { amount, confidence: amountConfidence } = extractAmount(text);
-  const reference = extractReference(text);
+  const { methods: paymentMethods, confidence: paymentMethodConfidence } = extractPaymentMethods(text);
+  const dates = extractDates(text);
+
+  let reference = extractReference(text);
+  if (!reference.value && payee.value && amount) {
+    const date = dates.dueDate ?? dates.issueDate;
+    if (date) reference = fallbackReference(payee.value, amount.value, date);
+  }
 
   return {
     payeeName: payee.value,
@@ -225,5 +354,11 @@ export async function extractPaymentDetails(input: ExtractionInput): Promise<Ext
     amountConfidence,
     referenceNumber: reference.value,
     referenceNumberConfidence: reference.confidence,
+    paymentMethods,
+    paymentMethodConfidence,
+    issueDate: dates.issueDate,
+    issueDateConfidence: dates.issueDateConfidence,
+    dueDate: dates.dueDate,
+    dueDateConfidence: dates.dueDateConfidence,
   };
 }

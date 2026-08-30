@@ -119,3 +119,52 @@ model PaymentIntent {
 
   @@map("payment_intents")
 }
+
+// FR-15: a payee is an identity+payment-method pair, and the mapping only
+// ever exists because the owner approved it — nothing here is ever
+// auto-inferred by the resolver. One payee can have several approved email
+// identities (FR-18, "this new email is also Riya") without duplicating
+// Riya as a second payee, which a single flat table couldn't express.
+model Payee {
+  id                String  @id @default(cuid())
+  name              String
+  recipientNickname String  @map("recipient_nickname") // the Perflo nickname this payee pays through
+  // Only true once the real Perflo grant (perflo grant enable, Section 7.7's
+  // browser approval) has actually been set up — a Payee row existing on
+  // its own is NOT the same as being allowed to auto-pay (FR-18: the grant
+  // approval IS the new-payee approval, nothing less counts).
+  grantApproved Boolean @default(false) @map("grant_approved")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  identities     PayeeIdentity[]
+  paymentMethods PayeePaymentMethod[]
+
+  @@map("payees")
+}
+
+model PayeeIdentity {
+  id         String   @id @default(cuid())
+  payeeId    String   @map("payee_id")
+  payee      Payee    @relation(fields: [payeeId], references: [id])
+  senderAddr String   @unique @map("sender_addr") // one address belongs to exactly one payee
+  approvedAt DateTime @default(now()) @map("approved_at")
+
+  @@map("payee_identities")
+}
+
+// Raw bank/UPI identifiers are never stored as plaintext. `encryptedPayload`
+// holds the actual normalized method (AES-256-GCM, worker/src/payee-crypto.ts),
+// and `lookupHash` is a separate keyed hash (HMAC-SHA256, same module) used
+// for the resolver's exact-match lookup — DB access alone can't be
+// brute-forced back into a real VPA or account number from the hash.
+model PayeePaymentMethod {
+  id               String   @id @default(cuid())
+  payeeId          String   @map("payee_id")
+  payee            Payee    @relation(fields: [payeeId], references: [id])
+  rail             String   // "upi" | "bank_neft"
+  encryptedPayload Bytes    @map("encrypted_payload")
+  lookupHash       String   @unique @map("lookup_hash")
+  approvedAt       DateTime @default(now()) @map("approved_at")
+
+  @@map("payee_payment_methods")
+}
