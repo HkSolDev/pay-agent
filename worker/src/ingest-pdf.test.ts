@@ -60,6 +60,7 @@ describe("ingestGmailMessages — PDF attachment text extraction", () => {
     const row = await prisma.email.findUniqueOrThrow({ where: { gmailMessageId: "pdf-test-1" } });
     expect(row.bodyText).toContain("Hi, invoice attached, thanks.");
     expect(row.bodyText).toContain("TOTAL AMOUNT DUE: ₹15,000");
+    expect(row.attachments).toEqual(expect.arrayContaining([expect.objectContaining({ filename: "invoice.pdf", extractionStatus: "extracted" })]));
     expect(row.classification).toBe("invoice");
   });
 
@@ -87,6 +88,7 @@ describe("ingestGmailMessages — PDF attachment text extraction", () => {
 
     const row = await prisma.email.findUniqueOrThrow({ where: { gmailMessageId: "pdf-test-2" } });
     expect(row.bodyText).toBe("See attached.");
+    expect(row.attachments).toEqual(expect.arrayContaining([expect.objectContaining({ filename: "corrupt.pdf", extractionStatus: "failed" })]));
   });
 
   it("never fetches attachments for a message the junk filter already ignored", async () => {

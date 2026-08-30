@@ -33,6 +33,26 @@ describe("Payee approval — an owner-controlled setup event", () => {
     expect(d.calls).toEqual(["recipient", "grant", "save:riya@example.com"]);
   });
 
+  it("supports an approved bank rail without exposing a payment execution path", async () => {
+    const d = deps();
+    let savedMethod: unknown;
+    d.saveApprovedPayee = async (record) => {
+      savedMethod = record.paymentMethod;
+      d.calls.push(`save:${record.senderAddr}`);
+      return { payeeId: "vendor-1", created: true };
+    };
+
+    await expect(approvePayee({
+      ...request,
+      name: "Vendor Services",
+      senderAddr: "billing@vendor.example",
+      paymentMethod: { kind: "bank_neft", accountNumber: "5010023456789", ifsc: "HDFC0001234", beneficiaryName: "Vendor Services" },
+    }, d)).resolves.toEqual({ status: "approved", payeeId: "vendor-1", grantId: "grant-1" });
+
+    expect(savedMethod).toEqual({ kind: "bank_neft", accountNumber: "5010023456789", ifsc: "HDFC0001234", beneficiaryName: "Vendor Services" });
+    expect(d.calls).toEqual(["recipient", "grant", "save:billing@vendor.example"]);
+  });
+
   it("is idempotent: repeating the same approval never creates another recipient or grant", async () => {
     const d = deps();
     d.findExistingApproval = async () => ({ payeeId: "riya-1" });
@@ -43,6 +63,8 @@ describe("Payee approval — an owner-controlled setup event", () => {
   it("rejects invalid payment rails and unsafe grant caps before any external call", async () => {
     for (const badRequest of [
       { ...request, paymentMethod: { kind: "upi" as const, vpa: "invalid" } },
+      { ...request, paymentMethod: { kind: "bank_neft" as const, accountNumber: "5010023456789", ifsc: "NOTIFSC" } },
+      { ...request, paymentMethod: { kind: "bank_neft" as const, accountNumber: "123", ifsc: "HDFC0001234" } },
       { ...request, grant: { ...request.grant, perPaymentCapInr: "0" } },
       { ...request, grant: { ...request.grant, maxPayments: 0 } },
     ]) {

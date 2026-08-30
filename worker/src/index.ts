@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { prisma } from "@perflo-ap-agent/db";
 import { fetchNewGmailMessages, isGmailConnected } from "./gmail.js";
-import { ingestGmailMessages } from "./ingest.js";
+import { ingestGmailMessages, processPendingLevel1 } from "./ingest.js";
 
 // PRD FR-1 default is 5 minutes; overridable for testing (POLL_INTERVAL_SECONDS=90
 // while watching new mail arrive live). Cron syntax can't express "every 90
@@ -42,6 +42,7 @@ async function pollOnce() {
 
     const messages = await fetchNewGmailMessages(sinceEpochSeconds);
     const { inserted, skipped } = await ingestGmailMessages(messages);
+    await processPendingLevel1();
     console.log(
       `[ingest] fetched ${messages.length}, inserted ${inserted}, skipped ${skipped} (duplicates)`,
     );
