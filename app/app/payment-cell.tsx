@@ -1,8 +1,11 @@
+"use client";
+
+import { useState } from "react";
 import type { PaymentIntentStatus } from "@perflo-ap-agent/db";
 import { assertUnreachableStatus } from "../../worker/src/payment-status";
 import { confirmPayment, preparePayment } from "./actions";
 
-interface Intent {
+export interface IntentSummary {
   status: PaymentIntentStatus;
   amount: string;
   recipientNickname: string;
@@ -10,74 +13,141 @@ interface Intent {
   lastError: string | null;
 }
 
-/**
- * A real switch over PaymentIntentStatus, not a chain of JSX conditionals —
- * the `default: assertUnreachableStatus(status)` branch means TypeScript
- * refuses to compile this file if a 6th status is ever added to the enum
- * without a case being added here too. That's the actual guarantee: not
- * "a reviewer remembered to check," but "the build fails until you do."
- */
 export function PaymentCell({
   emailId,
   classification,
+  defaultNickname,
+  defaultAmount,
   intent,
 }: {
   emailId: string;
   classification: string | null;
-  intent: Intent | undefined;
+  defaultNickname?: string;
+  defaultAmount?: string;
+  intent: IntentSummary | undefined;
 }) {
+  const [isPreparing, setIsPreparing] = useState(false);
+
   if (classification === "ignored") {
-    return <span className="status">ignored — not payable</span>;
+    return <span className="payment-badge badge-ignored">Not payable</span>;
   }
 
+  // Step 1: No intent prepared yet -> Two-step safety gate (Prepare first)
   if (!intent) {
+    if (!isPreparing) {
+      return (
+        <button
+          type="button"
+          className="prepare-trigger-button"
+          onClick={() => setIsPreparing(true)}
+        >
+          Prepare payment ▾
+        </button>
+      );
+    }
+
     return (
-      <form action={preparePayment} className="pay-form">
+      <form
+        action={async (formData) => {
+          await preparePayment(formData);
+          setIsPreparing(false);
+        }}
+        className="prepare-form-compact"
+      >
         <input type="hidden" name="emailId" value={emailId} />
         <input type="hidden" name="currency" value="INR" />
-        <input name="recipientNickname" placeholder="recipient nickname" required />
-        <input
-          name="amount"
-          placeholder="amount, e.g. 500"
-          inputMode="decimal"
-          pattern="\d+(\.\d{1,2})?"
-          title="A plain positive number, e.g. 500 or 499.50 — no ₹ symbol"
-          required
-        />
-        <button type="submit" className="text-button">Prepare</button>
+        <div className="prepare-inputs">
+          <input
+            name="recipientNickname"
+            placeholder="Recipient nickname"
+            defaultValue={defaultNickname ?? ""}
+            required
+            className="compact-input"
+          />
+          <input
+            name="amount"
+            placeholder="Amount, e.g. 500"
+            defaultValue={defaultAmount ?? ""}
+            inputMode="decimal"
+            pattern="\d+(\.\d{1,2})?"
+            title="A plain positive number, e.g. 500 or 499.50"
+            required
+            className="compact-input"
+          />
+        </div>
+        <div className="prepare-actions">
+          <button type="submit" className="button-primary-compact">
+            Prepare →
+          </button>
+          <button
+            type="button"
+            className="button-ghost-compact"
+            onClick={() => setIsPreparing(false)}
+          >
+            Cancel
+          </button>
+        </div>
       </form>
     );
   }
 
+  // Step 2: Lifecycle states switch
   switch (intent.status) {
     case "pending":
       return (
-        <form action={confirmPayment.bind(null, emailId)}>
-          <button type="submit" className="text-button">
-            Confirm &amp; pay ₹{intent.amount} to {intent.recipientNickname}
-          </button>
-        </form>
+        <div className="confirm-card-compact">
+          <div className="confirm-meta">
+            <span className="confirm-ready-tag">Ready to pay</span>
+            <strong className="confirm-amount">₹{intent.amount}</strong>
+            <span className="confirm-to">→ {intent.recipientNickname}</span>
+          </div>
+          <form action={confirmPayment.bind(null, emailId)}>
+            <button type="submit" className="button-confirm-pay">
+              Confirm &amp; pay
+            </button>
+          </form>
+        </div>
       );
+
     case "claimed":
-      return <span className="status">processing…</span>;
+      return (
+        <div className="payment-status-pill pill-processing">
+          <span className="status-indicator-dot dot-processing"></span>
+          <span>Processing…</span>
+        </div>
+      );
+
     case "paid":
-      return <span className="status">paid ✓ {intent.paymentReference}</span>;
+      return (
+        <div className="payment-status-pill pill-paid">
+          <span className="status-indicator-dot dot-paid"></span>
+          <span>Paid ✓ {intent.paymentReference ? `· ${intent.paymentReference}` : ""}</span>
+        </div>
+      );
+
     case "failed":
       return (
-        <form action={confirmPayment.bind(null, emailId)} className="pay-form">
-          <span className="status status-warn">{intent.lastError ?? "Failed"}</span>
-          <button type="submit" className="text-button">Retry</button>
-        </form>
+        <div className="payment-failed-wrap">
+          <div className="payment-status-pill pill-failed">
+            <span className="status-indicator-dot dot-failed"></span>
+            <span>Failed {intent.lastError ? `(${intent.lastError})` : ""}</span>
+          </div>
+          <form action={confirmPayment.bind(null, emailId)}>
+            <button type="submit" className="button-retry">
+              Retry
+            </button>
+          </form>
+        </div>
       );
+
     case "unknown_outcome":
-      // No retry control on purpose (FR-27): outcome is unknown, may
-      // already be paid — a human must check `perflo activity` first.
       return (
-        <span className="status status-warn">
-          ⚠ uncertain — check Perflo activity before retrying
-          {intent.lastError ? ` (${intent.lastError})` : ""}
-        </span>
+        <div className="payment-status-pill pill-uncertain" title="FR-27: never automatically retried">
+          <span className="status-indicator-dot dot-uncertain"></span>
+          <span>⚠ Uncertain — check dashboard before retrying</span>
+        </div>
       );
+
     default:
       return assertUnreachableStatus(intent.status);
   }
