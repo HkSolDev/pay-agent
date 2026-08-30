@@ -149,12 +149,22 @@ export async function confirmPayment(emailId: string, _formData: FormData): Prom
     // it at the provider (see payment-executor.ts's error classes).
     const providerReference =
       err instanceof PaymentUnknownOutcomeError || err instanceof PaymentDefiniteFailure ? err.providerReference : undefined;
-    await prisma.paymentIntent.updateMany({
+    const updated = await prisma.paymentIntent.updateMany({
       where: { emailId, status: "claimed" },
       data: { status, lastError, ...(providerReference ? { paymentReference: providerReference } : {}) },
     });
+    // Re-throwing here used to crash the whole page with Next.js's raw
+    // error overlay (e.g. a nickname with no approved payee rail) even
+    // though the failure was already recorded above — the point of writing
+    // it to the row is exactly so the queue's own "Failed" pill can show it
+    // on the next render, not to also blow up the form submission. The one
+    // case nothing was recorded for (this row was never actually claimed —
+    // e.g. a concurrent claim) has nothing useful to show inline, so it's
+    // logged server-side instead of surfaced as a client-facing crash.
+    if (updated.count === 0) {
+      console.error(`confirmPayment: could not record failure for email ${emailId} (row not in "claimed" state):`, err);
+    }
     revalidatePath("/");
-    throw err;
   }
 }
 
