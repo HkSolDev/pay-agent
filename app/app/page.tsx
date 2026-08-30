@@ -45,8 +45,12 @@ function ReviewDetails({ email }: { email: {
     <div className="review-grid" aria-label="Extracted payment review">
       <div><span>Pay amount</span><strong>{amountValue && amountCurrency ? `${amountCurrency} ${amountValue}` : "Not found"}</strong></div>
       <div><span>Invoice reference</span><strong>{reference ?? "Not found"}</strong></div>
-      <div><span>Extraction confidence</span><strong>{percent(extraction.amountConfidence)}</strong></div>
+      <div><span>Payee confidence</span><strong>{percent(extraction.payeeNameConfidence)}</strong></div>
+      <div><span>Amount confidence</span><strong>{percent(extraction.amountConfidence)}</strong></div>
+      <div><span>Reference confidence</span><strong>{percent(extraction.referenceNumberConfidence)}</strong></div>
+      <div><span>Rail confidence</span><strong>{percent(extraction.paymentMethodConfidence)}</strong></div>
       <div><span>Verifier score</span><strong>{asNumber(verification.score) === null ? "—" : `${verification.score}/100`}</strong></div>
+      <div><span>Authentication</span><strong>{verification.authPassed === true ? "Aligned" : "Needs review"}</strong></div>
       <div><span>Payment rail</span><strong>{paymentKinds.length > 0 ? paymentKinds.join(" + ") : "Not found"}</strong></div>
       <div><span>Duplicate check</span><strong className={isDuplicate || suspiciousDuplicate ? "review-danger" : "review-safe"}>
         {isDuplicate ? "Duplicate" : suspiciousDuplicate ? "Review conflict" : "No duplicate"}
