@@ -53,7 +53,12 @@ export function verifyEmail(input: VerificationInput): VerificationResult {
     hardFails.push("lookalike_sender_domain");
   }
   if (input.replyTo && input.replyTo.toLowerCase() !== input.fromAddr.toLowerCase()) softFlags.push("reply_to_mismatch");
-  if (input.extractedPaymentMethodKeys.some((key) => !input.knownPaymentMethodKeys.includes(key))) {
+  // A changed rail is a hard fail only for a sender we already know. For a
+  // genuinely new sender there is no approved rail to compare against yet;
+  // the resolver/policy will route it to owner approval rather than calling
+  // a normal first-time vendor a fraud attempt.
+  const senderIsKnown = input.knownSenderAddrs.some((address) => address.toLowerCase() === input.fromAddr.toLowerCase());
+  if (senderIsKnown && input.extractedPaymentMethodKeys.some((key) => !input.knownPaymentMethodKeys.includes(key))) {
     hardFails.push("payment_method_mismatch");
   }
   if (input.links.some((link) => !link.finalDomain.toLowerCase().endsWith(fromDomain))) {

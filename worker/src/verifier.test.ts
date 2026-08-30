@@ -41,6 +41,13 @@ describe("Verifier — hard evidence before policy can auto-pay", () => {
     expect(result.hardFails).toContain("payment_method_mismatch");
   });
 
+  it("does not mistake a first-time sender for a changed approved payment rail", () => {
+    const input = base();
+    input.fromAddr = "first-time@vendor.example";
+    input.extractedPaymentMethodKeys = ["upi:first-time@okaxis"];
+    expect(verifyEmail(input).hardFails).not.toContain("payment_method_mismatch");
+  });
+
   it("hard-fails an invoice link whose final domain conflicts with the approved sender domain", () => {
     const input = base();
     input.links = [{ href: "https://riya-invoice.example/pay", finalDomain: "attacker.example", visibleText: "Riya invoice portal" }];

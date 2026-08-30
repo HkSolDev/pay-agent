@@ -51,6 +51,20 @@ model Email {
   injectionDetected        Boolean @default(false) @map("injection_detected")
   injectionEvidence        Json?   @map("injection_evidence")
 
+  // Level 1's persistent, reviewable decision trail. `extractionSummary`
+  // intentionally excludes raw UPI/account details. The original email body
+  // is retained separately as the audit source; derived rail values remain
+  // transient or live only in encrypted PayeePaymentMethod rows.
+  extractionSummary Json?    @map("extraction_summary")
+  extractionBackend String?  @map("extraction_backend")
+  resolvedPayeeId String?    @map("resolved_payee_id")
+  payeeResolution Json?      @map("payee_resolution")
+  verificationResult Json?   @map("verification_result")
+  duplicateResult Json?      @map("duplicate_result")
+  policyDecision String?     @map("policy_decision")
+  policyReasons String[]     @default([]) @map("policy_reasons")
+  level1ProcessedAt DateTime? @map("level1_processed_at")
+
   gmailLabels String[] @map("gmail_labels")
   ingestedAt  DateTime @default(now()) @map("ingested_at")
 

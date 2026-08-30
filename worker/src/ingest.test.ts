@@ -77,6 +77,27 @@ describe("ingestGmailMessages", () => {
     expect(row.classificationRationale).toContain("invoice");
     expect(row.injectionDetected).toBe(false);
     expect(row.injectionEvidence).toEqual([]);
+    // Level 1 persists a reviewable summary, never a raw UPI/account value.
+    expect(row.extractionSummary).toEqual(expect.objectContaining({
+      amount: { currency: "INR", value: "500.00" },
+      paymentMethodCount: 0,
+    }));
+    expect(row.policyDecision).toBe("needs_approval");
+    expect(row.policyReasons).toEqual(expect.arrayContaining([expect.stringMatching(/Payee not fully resolved/)]));
+    expect(row.level1ProcessedAt).not.toBeNull();
+  });
+
+  it("persists only masked rail evidence, never the raw UPI identifier", async () => {
+    await ingestGmailMessages([
+      fakeMessage({
+        messageId: "msg-level1-redaction",
+        subject: "Invoice INV-55",
+        payload: { mimeType: "text/plain", body: { data: encoded("Invoice INV-55. Total due ₹500. UPI: vendor@okaxis.") } },
+      }),
+    ], testDeps);
+    const row = await prisma.email.findUniqueOrThrow({ where: { gmailMessageId: "msg-level1-redaction" } });
+    expect(row.extractionSummary).toEqual(expect.objectContaining({ paymentMethodKinds: ["upi"], paymentMethodCount: 1 }));
+    expect(JSON.stringify(row.extractionSummary)).not.toContain("vendor@okaxis");
   });
 
   it("uses the injected LLM classifier for a non-junk email", async () => {

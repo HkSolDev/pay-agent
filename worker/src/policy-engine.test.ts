@@ -41,6 +41,7 @@ describe("Policy engine — FR-19 is an all-of gate", () => {
     { status: "new_payee" },
     { status: "details_changed", payeeId: "riya-1", priorNickname: "riya-perflo" },
     { status: "unknown_sender", payeeId: "riya-1", knownNickname: "riya-perflo" },
+    { status: "multiple_payment_methods" },
   ] as const)("returns needs_approval for resolver status $status", (resolution) => {
     const input = safeInput(); input.resolution = resolution;
     expect(decidePolicy(input).decision).toBe("needs_approval");
