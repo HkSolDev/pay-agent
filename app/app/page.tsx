@@ -99,11 +99,6 @@ export default async function QueuePage() {
         </div>
       </header>
 
-      <section className="notice" aria-label="Level 1 dry-run status">
-        <strong>Level 1 — review-only</strong>
-        <span>Classification and extraction are recorded for review. Automatic payment remains disabled.</span>
-      </section>
-
       {razorpayBalance && (
         <section
           className={`notice ${razorpayBalance.availableAmountMinor <= 0 ? "notice-warn" : ""}`}
