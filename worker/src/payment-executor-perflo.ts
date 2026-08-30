@@ -1,5 +1,5 @@
-import type { CreatePayoutRequest, PayoutResult, PaymentExecutor } from "./payment-executor.js";
-import { PerfloDefiniteFailure, PerfloUnknownOutcomeError, type PerfloPayResult } from "./perflo-cli.js";
+import type { CreatePayoutRequest, PayoutResult, PaymentExecutor } from "./payment-executor";
+import { PerfloDefiniteFailure, PerfloUnknownOutcomeError, type PerfloPayResult } from "./perflo-cli";
 
 /** Integer minor units -> the decimal string Perflo's CLI/`--amount` flag expects. */
 function minorUnitsToDecimalString(amountMinor: bigint): string {

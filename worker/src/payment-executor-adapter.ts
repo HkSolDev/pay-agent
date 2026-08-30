@@ -1,4 +1,4 @@
-import { PaymentDefiniteFailure, PaymentUnknownOutcomeError, type PayoutResult } from "./payment-executor.js";
+import { PaymentDefiniteFailure, PaymentUnknownOutcomeError, type PayoutResult } from "./payment-executor";
 
 /**
  * `requestManualPayment` (worker/src/manual-pay.ts) still uses the older
