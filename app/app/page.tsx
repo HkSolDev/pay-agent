@@ -1,11 +1,9 @@
 import { prisma } from "@perflo-ap-agent/db";
 import { PaymentCell } from "./payment-cell";
 
-// Level 0: no classifier exists yet, so every ingested row is just "queued" —
-// there's no auto-paid/needs-approval/quarantined distinction until Level 1
-// adds the LLM stage. The Pay column is the one real, working exception:
-// the owner types a recipient + amount by hand and confirms, same as the
-// PRD's Level 0 "locked manual pay" — no policy engine decides this yet.
+// Level 1 remains a review-only queue while KYC is pending. The policy result
+// explains what needs attention, but no result here triggers an automatic
+// payment; the existing manual two-click payment flow remains the only route.
 export default async function QueuePage() {
   const [emails, intents] = await Promise.all([
     prisma.email.findMany({ orderBy: { date: "desc" }, take: 50 }),
@@ -26,9 +24,9 @@ export default async function QueuePage() {
         </div>
       </header>
 
-      <section className="notice" aria-label="Level 0 status">
-        <strong>Level 0 — plumbing</strong>
-        <span>Gmail is connected and ingesting. Classification, verification, and auto-pay arrive in Level 1+.</span>
+      <section className="notice" aria-label="Level 1 dry-run status">
+        <strong>Level 1 — review-only</strong>
+        <span>Classification and extraction are recorded for review. Automatic payment remains disabled.</span>
       </section>
 
       <section className="card" aria-labelledby="queue-heading">
@@ -47,13 +45,14 @@ export default async function QueuePage() {
                 <th>Message</th>
                 <th>Date</th>
                 <th>Status</th>
+                <th>Review</th>
                 <th>Pay</th>
               </tr>
             </thead>
             <tbody>
               {emails.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="status">No mail ingested yet — the worker polls every 5 minutes.</td>
+                  <td colSpan={6} className="status">No mail ingested yet — the worker polls every 5 minutes.</td>
                 </tr>
               ) : (
                 emails.map((email) => {
@@ -69,6 +68,12 @@ export default async function QueuePage() {
                       </td>
                       <td>{email.date.toLocaleString()}</td>
                       <td><span className="status">{email.classification ?? "queued"}</span></td>
+                      <td>
+                        <div className="message-cell">
+                          <strong>{email.policyDecision ?? "pending review"}</strong>
+                          {email.policyReasons[0] && <span>{email.policyReasons[0]}</span>}
+                        </div>
+                      </td>
                       <td>
                         <PaymentCell emailId={email.id} classification={email.classification} intent={intent} />
                       </td>
