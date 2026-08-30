@@ -13,8 +13,17 @@ h1, h2 { margin: 0; letter-spacing: -.03em; } h1 { font-size: 32px; } h2 { font-
 .card { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
 .card-heading { padding: 22px 24px; border-bottom: 1px solid var(--line); }
 .count, .status { color: var(--muted); font-size: 13px; }
-.message-cell { display: grid; gap: 5px; max-width: 520px; }
+.message-cell { display: grid; gap: 5px; max-width: 620px; }
 .message-cell span { overflow: hidden; color: var(--muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.review-grid { display: grid; grid-template-columns: repeat(3, minmax(105px, 1fr)); gap: 8px 14px; margin-top: 5px; min-width: 430px; }
+.review-grid > div { display: grid; gap: 2px; }
+.review-grid span { color: var(--muted); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; white-space: normal; }
+.review-grid strong { overflow: hidden; font-size: 12px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.review-warning { grid-column: 1 / -1; padding-top: 5px; border-top: 1px solid var(--line); }
+.review-warning strong { color: #8b5e16; white-space: normal; }
+.review-warning[data-empty="true"] strong { color: var(--accent); }
+.review-safe { color: var(--accent); }
+.review-danger { color: #a63d32; }
 .table-wrap { overflow-x: auto; } table { width: 100%; border-collapse: collapse; text-align: left; } th, td { padding: 17px 24px; border-bottom: 1px solid var(--line); font-size: 14px; } th { color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; } tbody tr:last-child td { border-bottom: 0; }
 .text-button { border: 0; background: transparent; color: var(--accent); font-weight: 700; cursor: pointer; }
 .pay-form { display: flex; flex-direction: column; gap: 6px; min-width: 160px; }

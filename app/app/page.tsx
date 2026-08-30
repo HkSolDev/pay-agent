@@ -1,6 +1,63 @@
 import { prisma } from "@perflo-ap-agent/db";
 import { PaymentCell } from "./payment-cell";
 
+type JsonRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function percent(value: unknown): string {
+  const number = asNumber(value);
+  return number === null ? "—" : `${Math.round(number * 100)}%`;
+}
+
+function ReviewDetails({ email }: { email: {
+  extractionSummary: unknown;
+  verificationResult: unknown;
+  duplicateResult: unknown;
+  policyDecision: string | null;
+  policyReasons: string[];
+} }) {
+  const extraction = asRecord(email.extractionSummary);
+  const amount = asRecord(extraction.amount);
+  const verification = asRecord(email.verificationResult);
+  const duplicate = asRecord(email.duplicateResult);
+  const amountValue = asString(amount.value);
+  const amountCurrency = asString(amount.currency);
+  const reference = asString(extraction.referenceNumber);
+  const paymentKinds = Array.isArray(extraction.paymentMethodKinds)
+    ? extraction.paymentMethodKinds.filter((kind): kind is string => typeof kind === "string")
+    : [];
+  const isDuplicate = duplicate.duplicate === true;
+  const suspiciousDuplicate = typeof duplicate.suspiciousConflict === "string";
+  const warning = email.policyReasons[0] ?? (suspiciousDuplicate ? "Possible duplicate conflict." : null);
+
+  return (
+    <div className="review-grid" aria-label="Extracted payment review">
+      <div><span>Pay amount</span><strong>{amountValue && amountCurrency ? `${amountCurrency} ${amountValue}` : "Not found"}</strong></div>
+      <div><span>Invoice reference</span><strong>{reference ?? "Not found"}</strong></div>
+      <div><span>Extraction confidence</span><strong>{percent(extraction.amountConfidence)}</strong></div>
+      <div><span>Verifier score</span><strong>{asNumber(verification.score) === null ? "—" : `${verification.score}/100`}</strong></div>
+      <div><span>Payment rail</span><strong>{paymentKinds.length > 0 ? paymentKinds.join(" + ") : "Not found"}</strong></div>
+      <div><span>Duplicate check</span><strong className={isDuplicate || suspiciousDuplicate ? "review-danger" : "review-safe"}>
+        {isDuplicate ? "Duplicate" : suspiciousDuplicate ? "Review conflict" : "No duplicate"}
+      </strong></div>
+      <div className="review-warning" data-empty={!warning}>
+        <span>Warning</span><strong>{warning ?? "No warning"}</strong>
+      </div>
+    </div>
+  );
+}
+
 // Level 1 remains a review-only queue while KYC is pending. The policy result
 // explains what needs attention, but no result here triggers an automatic
 // payment; the existing manual two-click payment flow remains the only route.
@@ -45,7 +102,7 @@ export default async function QueuePage() {
                 <th>Message</th>
                 <th>Date</th>
                 <th>Status</th>
-                <th>Review</th>
+                <th>Extracted review</th>
                 <th>Pay</th>
               </tr>
             </thead>
@@ -71,7 +128,7 @@ export default async function QueuePage() {
                       <td>
                         <div className="message-cell">
                           <strong>{email.policyDecision ?? "pending review"}</strong>
-                          {email.policyReasons[0] && <span>{email.policyReasons[0]}</span>}
+                          <ReviewDetails email={email} />
                         </div>
                       </td>
                       <td>
