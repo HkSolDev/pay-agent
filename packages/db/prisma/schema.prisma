@@ -150,7 +150,22 @@ model Payee {
   // its own is NOT the same as being allowed to auto-pay (FR-18: the grant
   // approval IS the new-payee approval, nothing less counts).
   grantApproved Boolean @default(false) @map("grant_approved")
-  createdAt     DateTime @default(now()) @map("created_at")
+  // "pending" | "approved" | "revoked" — not a Prisma enum: this mirrors
+  // PayeePaymentMethod.status below, kept as a plain string for the same
+  // reason (owner-facing lifecycle labels, not a closed set worth an enum
+  // migration every time a new one is added).
+  status String @default("pending") @map("status")
+
+  // The grant caps/expiry approvePayee already validates (GrantRequest) but,
+  // until now, had nowhere real to persist — see worker/src/payee-approval.ts.
+  grantPerPaymentCapInr String?   @map("grant_per_payment_cap_inr")
+  grantTotalCapInr      String?   @map("grant_total_cap_inr")
+  grantMaxPayments      Int?      @map("grant_max_payments")
+  grantExpiresAt        DateTime? @map("grant_expires_at")
+
+  createdAt  DateTime  @default(now()) @map("created_at")
+  approvedAt DateTime? @map("approved_at")
+  revokedAt  DateTime? @map("revoked_at")
 
   identities     PayeeIdentity[]
   paymentMethods PayeePaymentMethod[]
@@ -180,7 +195,22 @@ model PayeePaymentMethod {
   rail             String   // "upi" | "bank_neft"
   encryptedPayload Bytes    @map("encrypted_payload")
   lookupHash       String   @unique @map("lookup_hash")
-  approvedAt       DateTime @default(now()) @map("approved_at")
+
+  // "active" | "replaced" | "revoked". Only "active" rails are ever loaded
+  // by loadApprovedPayees (payee-store.ts) — replacing or revoking a rail
+  // never deletes the row, so the full created/approved/replaced/revoked
+  // history stays queryable per payee.
+  status     String    @default("active") @map("status")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  approvedAt DateTime  @default(now()) @map("approved_at")
+  replacedAt DateTime? @map("replaced_at")
+  revokedAt  DateTime? @map("revoked_at")
+
+  // Points at the new row created when this one was replaced — self-relation
+  // kept nullable and unindexed-by-FK (a plain id column) so replacing a rail
+  // is a two-step "create new, then stamp old" write, not a single row that
+  // has to reference a not-yet-existing id.
+  replacedByMethodId String? @map("replaced_by_method_id")
 
   @@map("payee_payment_methods")
 }

@@ -1,6 +1,6 @@
 import { prisma } from "@perflo-ap-agent/db";
-import { decryptPaymentMethod } from "./payee-crypto.js";
-import { normalizePaymentMethod, type PaymentMethod } from "./payment-method-validation.js";
+import { decryptPaymentMethod } from "./payee-crypto";
+import { normalizePaymentMethod, type PaymentMethod } from "./payment-method-validation";
 import type { ApprovedPayee } from "./payee-resolver.js";
 
 /** Converts the encrypted canonical rail representation back to a typed value in memory only. */
@@ -22,7 +22,7 @@ export function paymentMethodFromNormalized(value: string): PaymentMethod | null
 export async function loadApprovedPayees(): Promise<ApprovedPayee[]> {
   const identities = await prisma.payeeIdentity.findMany({
     where: { payee: { grantApproved: true } },
-    include: { payee: { include: { paymentMethods: true } } },
+    include: { payee: { include: { paymentMethods: { where: { status: "active" } } } } },
   });
   const approved: ApprovedPayee[] = [];
   for (const identity of identities) {

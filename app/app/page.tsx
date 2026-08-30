@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { prisma } from "@perflo-ap-agent/db";
 import { PaymentCell } from "./payment-cell";
 import { ReviewDrawerLauncher } from "./review-drawer";
@@ -82,6 +83,7 @@ export default async function QueuePage() {
           <h1>Payment queue</h1>
         </div>
         <div className="actions">
+          <Link href="/payees" className="text-button">Payees</Link>
           <button type="button" disabled>Sync now</button>
           <button type="button" className="pause" disabled>Paused</button>
         </div>

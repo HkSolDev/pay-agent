@@ -60,6 +60,28 @@ describe("Payee store — real Postgres encrypted-rail integration", () => {
     expect(Buffer.from(stored.encryptedPayload).toString("utf8")).not.toContain("riya@okaxis");
   });
 
+  it("excludes a revoked rail from resolver lookup even though the payee is still approved", async () => {
+    const normalized = normalizePaymentMethod({ kind: "upi", vpa: "riya@okaxis" });
+    await prisma.payee.create({
+      data: {
+        id: ids[0], name: "Riya", recipientNickname: "riya-perflo", grantApproved: true,
+        identities: { create: { senderAddr: "billing@riya.example" } },
+        paymentMethods: {
+          create: {
+            rail: "upi",
+            encryptedPayload: prismaBytes(encryptPaymentMethod(normalized)),
+            lookupHash: hashPaymentMethod(normalized),
+            status: "revoked",
+            revokedAt: new Date(),
+          },
+        },
+      },
+    });
+
+    const loaded = await loadApprovedPayees();
+    expect(loaded).not.toEqual(expect.arrayContaining([expect.objectContaining({ payeeId: ids[0] })]));
+  });
+
   it("lets Postgres enforce the global unique lookup-hash constraint", async () => {
     const normalized = normalizePaymentMethod({ kind: "upi", vpa: "riya@okaxis" });
     const encrypted = encryptPaymentMethod(normalized);

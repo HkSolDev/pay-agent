@@ -1,5 +1,5 @@
 import type { PaymentMethod } from "./payee-resolver.js";
-import { validatePaymentMethod } from "./payment-method-validation.js";
+import { validatePaymentMethod } from "./payment-method-validation";
 
 export interface GrantRequest {
   perPaymentCapInr: string;

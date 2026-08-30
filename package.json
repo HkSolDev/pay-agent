@@ -10,6 +10,8 @@
     "build": "pnpm --dir app build",
     "typecheck": "pnpm --dir app typecheck && tsc --noEmit -p worker/tsconfig.json",
     "worker": "tsx worker/src/index.ts",
+    "demo:inbox": "tsx worker/src/demo-inbox.ts",
+    "demo:payees": "tsx worker/src/demo-payees.ts",
     "connect-gmail": "tsx worker/src/connect-gmail.ts",
     "test": "vitest run"
   },
