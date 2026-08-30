@@ -150,10 +150,15 @@ export async function ingestGmailMessages(messages: RawGmailMessage[], deps: Ing
       bodyHtmlHash: content.bodyHtmlHash,
       attachments: attachmentMetadata,
       links: content.links,
+      // Each mechanism's whole clause (through the next `;`), not just the
+      // 8-character "spf=pass" fragment a narrower match would give —
+      // worker/src/verifier.ts needs the domain attribution that comes
+      // after the pass/fail token (smtp.mailfrom=/header.from=/header.d=)
+      // to check alignment, which a bare "spf=pass" can't provide at all.
       auth: {
-        spf: m.headers["Authentication-Results"]?.match(/spf=\w+/i)?.[0] ?? null,
-        dkim: m.headers["Authentication-Results"]?.match(/dkim=\w+/i)?.[0] ?? null,
-        dmarc: m.headers["Authentication-Results"]?.match(/dmarc=\w+/i)?.[0] ?? null,
+        spf: m.headers["Authentication-Results"]?.match(/spf=[^;]+/i)?.[0]?.trim() ?? null,
+        dkim: m.headers["Authentication-Results"]?.match(/dkim=[^;]+/i)?.[0]?.trim() ?? null,
+        dmarc: m.headers["Authentication-Results"]?.match(/dmarc=[^;]+/i)?.[0]?.trim() ?? null,
       },
       gmailLabels: m.labelIds,
       classification: isJunk ? "ignored" : classification?.kind ?? null,
