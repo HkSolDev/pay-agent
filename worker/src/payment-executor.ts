@@ -63,7 +63,15 @@ export interface PaymentExecutor {
  * provider-neutral, so a non-Perflo executor's "unknown" status maps to the
  * same never-auto-retried semantics without importing anything Perflo-specific.
  */
-export class PaymentUnknownOutcomeError extends Error {}
+export class PaymentUnknownOutcomeError extends Error {
+  constructor(message: string, public readonly providerReference?: string) {
+    super(message);
+  }
+}
 
 /** Provider-neutral counterpart to PerfloDefiniteFailure — safe to retry. */
-export class PaymentDefiniteFailure extends Error {}
+export class PaymentDefiniteFailure extends Error {
+  constructor(message: string, public readonly providerReference?: string) {
+    super(message);
+  }
+}

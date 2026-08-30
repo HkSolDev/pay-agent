@@ -2,6 +2,8 @@ import "dotenv/config";
 import { prisma } from "@perflo-ap-agent/db";
 import { fetchNewGmailMessages, isGmailConnected } from "./gmail.js";
 import { ingestGmailMessages, processPendingLevel1 } from "./ingest.js";
+import { createRazorpayExecutor } from "./payment-executor-razorpay.js";
+import { reconcileStuckPayments } from "./payment-reconcile.js";
 
 // PRD FR-1 default is 5 minutes; overridable for testing (POLL_INTERVAL_SECONDS=90
 // while watching new mail arrive live). Cron syntax can't express "every 90
@@ -10,6 +12,18 @@ import { ingestGmailMessages, processPendingLevel1 } from "./ingest.js";
 const POLL_INTERVAL_SECONDS = Number(process.env.POLL_INTERVAL_SECONDS ?? 300);
 
 const CHECKPOINT_ID = 1;
+
+// Same credentials app/app/actions.ts reads to decide whether RazorpayX is
+// configured — unset simply means there is nothing to reconcile (the Perflo
+// CLI path has no status-polling command at all; see payment-executor-perflo.ts).
+const razorpayExecutor =
+  process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET && process.env.RAZORPAY_ACCOUNT_NUMBER
+    ? createRazorpayExecutor({
+        keyId: process.env.RAZORPAY_KEY_ID,
+        keySecret: process.env.RAZORPAY_KEY_SECRET,
+        accountNumber: process.env.RAZORPAY_ACCOUNT_NUMBER,
+      })
+    : null;
 
 // Durable across restarts (`ingest_checkpoint`, single row) — a killed and
 // restarted worker (which happens constantly in dev) must resume from where
@@ -52,6 +66,20 @@ async function pollOnce() {
     await saveCheckpoint(sinceEpochSeconds);
   } catch (err) {
     console.error("[ingest] poll failed, will retry next tick:", err);
+  }
+
+  // Independent of the ingest step above and of each other — a failure here
+  // must never block Gmail ingest, and vice versa. This never creates a new
+  // payout, only reads a status RazorpayX already knows (FR-27).
+  if (razorpayExecutor) {
+    try {
+      const { checked, updated } = await reconcileStuckPayments(razorpayExecutor);
+      if (checked > 0) {
+        console.log(`[reconcile] checked ${checked} stuck payment(s), updated ${updated}`);
+      }
+    } catch (err) {
+      console.error("[reconcile] payment reconciliation failed, will retry next tick:", err);
+    }
   }
 }
 
