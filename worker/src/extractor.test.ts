@@ -186,6 +186,18 @@ describe("Level 1 payment-detail extractor contract", () => {
     if (expected.referenceNumber === null) expect(result.referenceNumberConfidence).toBe(0);
   });
 
+  it("treats a source-text invoice reference as evidence, not an LLM-style estimate", async () => {
+    const result = await extractPaymentDetails({
+      kind: "invoice",
+      fromName: "Vendor",
+      subject: "Monthly bill",
+      bodyText: "Invoice Number: INV-9005\nTotal due: INR 500\nUPI: vendor@okaxis",
+    });
+
+    expect(result.referenceNumber).toBe("INV-9005");
+    expect(result.referenceNumberConfidence).toBe(1);
+  });
+
   it("refuses to extract from a classifier result that is not payable", async () => {
     await expect(extractPaymentDetails({
       kind: "receipt",

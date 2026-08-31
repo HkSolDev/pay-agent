@@ -223,7 +223,12 @@ function extractPaymentMethods(text: string): PaymentMethodExtraction {
 
 // --- Reference / invoice number ----------------------------------------
 
-const REFERENCE_PATTERN = /\b(?:invoice|inv|bill)\.?\s*(?:no\.?|number|#)?\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9\-\/]{2,20})/gi;
+// Keep the explicit-label pattern separate and first. Combining its optional
+// "number/no" token with the broad pattern lets a regex engine capture the
+// word "Number" itself instead of the actual identifier in
+// "Invoice Number: INV-9005".
+const LABELLED_REFERENCE_PATTERN = /\b(?:invoice|inv|bill)\.?\s+(?:no\.?|number|#)\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9\-\/]{2,20})/gi;
+const REFERENCE_PATTERN = /\b(?:invoice|inv|bill)\.?\s*(?:[:#]\s*|\s+)([A-Za-z0-9][A-Za-z0-9\-\/]{2,20})/gi;
 
 function extractReference(text: string): { value: string | null; confidence: number } {
   // Not just the first match: an earlier mention (a quoted reply, "your
@@ -231,11 +236,28 @@ function extractReference(text: string): { value: string | null; confidence: num
   // would otherwise shadow the real, current reference. The last
   // digit-containing match is the current invoice's own number far more
   // often than the first one is.
-  let found: string | null = null;
-  for (const match of text.matchAll(REFERENCE_PATTERN)) {
-    if (/\d/.test(match[1])) found = match[1];
+  const findLastDigitContainingReference = (pattern: RegExp): string | null => {
+    let found: string | null = null;
+    for (const match of text.matchAll(pattern)) {
+      if (/\d/.test(match[1])) found = match[1];
+    }
+    return found;
+  };
+
+  const labelled = findLastDigitContainingReference(LABELLED_REFERENCE_PATTERN);
+  // An explicit "Invoice Number"/"Invoice No" label is direct, structured
+  // evidence from the parsed source, not a model estimate.
+  if (labelled) return { value: labelled, confidence: 1 };
+
+  const found = findLastDigitContainingReference(REFERENCE_PATTERN);
+  if (found) {
+    // This is no longer merely an LLM's estimate: the candidate was matched
+    // directly in the source text next to an invoice label. It is still kept
+    // below 1.0 because the pattern can match a quoted/replaced invoice; the
+    // duplicate and payee/rail checks remain independent guards.
+    return { value: found, confidence: 0.9 };
   }
-  return found ? { value: found, confidence: 0.85 } : { value: null, confidence: 0 };
+  return { value: null, confidence: 0 };
 }
 
 // FR-10's fallback: "invoice number, or failing that a hash of payee +
