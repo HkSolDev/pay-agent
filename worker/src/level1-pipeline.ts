@@ -2,7 +2,7 @@ import type { ClassificationResult } from "./classifier.js";
 import type { ExtractionInput, ExtractionResult, PaymentMethod } from "./extractor.js";
 import { normalizePaymentMethod } from "./payment-method-validation.js";
 import { findDuplicate, type DuplicateResult, type PayableFingerprint } from "./duplicate-detector.js";
-import { decidePolicy, type PolicyDecision } from "./policy-engine.js";
+import { decidePolicy, applyCurrencyGuard, type PolicyDecision } from "./policy-engine.js";
 import { resolvePayee, type ApprovedPayee, type ResolveResult } from "./payee-resolver.js";
 import { verifyEmail, type VerificationResult } from "./verifier.js";
 import { computeGrantStatus, amountWithinOwnerCeiling, type PayeeUsage } from "./auto-pay-eligibility.js";
@@ -99,7 +99,7 @@ export async function processLevel1(
     injectionDetected: input.classification.injectionDetected,
   });
   const resolution: ResolveResult = extraction.paymentMethods.length === 1
-    ? resolvePayee({ senderAddr: input.extractionInput.fromAddr ?? "", paymentMethod: extraction.paymentMethods[0] }, input.approvedPayees)
+    ? resolvePayee({ senderAddr: input.extractionInput.fromAddr ?? "", paymentMethod: extraction.paymentMethods[0], allowAnySender: process.env.DEMO_MODE === "true" }, input.approvedPayees)
     : extraction.paymentMethods.length > 1 ? { status: "multiple_payment_methods" } : { status: "new_payee" };
   // A changed rail and an unresolved multi-rail invoice are ordinary owner
   // review cases. The resolver already carries the decisive status; do not
@@ -118,6 +118,7 @@ export async function processLevel1(
   // (new_payee, details_changed, etc.) already fails decidePolicy's
   // resolution check on its own, so there's nothing to look up yet.
   const resolvedPayee = resolvedPayeeId ? input.approvedPayees.find((p) => p.payeeId === resolvedPayeeId) : undefined;
+  const currency = extraction.amount?.currency;
   const amountInr = extraction.amount ? Number(extraction.amount.value) : NaN;
   const usage = resolvedPayee && Number.isFinite(amountInr)
     ? await (input.loadPayeeUsage ?? (async () => ({ totalPaidInr: 0, paidCount: 0 })))(resolvedPayee.recipientNickname)
@@ -150,5 +151,6 @@ export async function processLevel1(
     paused: process.env.AUTO_PAY_MODE !== "on",
     payeeAutoPayEnabled: resolvedPayee?.grant.autoPayEnabled ?? false,
   });
-  return { extraction, resolution, verification, duplicate, decision: decision.decision, reasons: decision.reasons };
+  const guarded = applyCurrencyGuard(decision, currency);
+  return { extraction, resolution, verification, duplicate, decision: guarded.decision, reasons: guarded.reasons };
 }

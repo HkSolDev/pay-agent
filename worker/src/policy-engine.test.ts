@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decidePolicy, type PolicyInput } from "./policy-engine.js";
+import { decidePolicy, GLOBAL_PAUSE_REASON, PAYEE_AUTOPAY_DISABLED_REASON, type PolicyInput } from "./policy-engine.js";
 
 const safeInput = (): PolicyInput => ({
   classification: { kind: "invoice", confidence: 0.9, injectionDetected: false },
@@ -57,5 +57,13 @@ describe("Policy engine — FR-19 is an all-of gate", () => {
   it("ignores a duplicate/replayed invoice rather than sending it to auto-pay", () => {
     const input = safeInput(); input.duplicate = true;
     expect(decidePolicy(input)).toEqual(expect.objectContaining({ decision: "ignore" }));
+  });
+
+  it("emits the exported runtime-reason constants, not ad-hoc strings, for the two toggleable blockers", () => {
+    const paused = safeInput(); paused.paused = true;
+    expect(decidePolicy(paused).reasons).toContain(GLOBAL_PAUSE_REASON);
+
+    const payeeOptedOut = safeInput(); payeeOptedOut.payeeAutoPayEnabled = false;
+    expect(decidePolicy(payeeOptedOut).reasons).toContain(PAYEE_AUTOPAY_DISABLED_REASON);
   });
 });

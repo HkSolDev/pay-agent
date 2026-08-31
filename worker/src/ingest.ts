@@ -190,6 +190,7 @@ async function processEmailRow(
         policyDecision: result.decision,
         recipientNickname: result.resolution.recipientNickname,
         amount: result.extraction.amount.value,
+        currency: result.extraction.amount.currency,
       });
     }
 }

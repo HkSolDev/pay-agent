@@ -29,6 +29,8 @@ export interface ApprovedPayee {
 export interface ResolveRequest {
   senderAddr: string;
   paymentMethod: PaymentMethod;
+  /** Demo-only escape hatch: match an existing rail without requiring sender identity. */
+  allowAnySender?: boolean;
 }
 
 export type ResolveResult =
@@ -63,6 +65,9 @@ export function resolvePayee(request: ResolveRequest, approved: ApprovedPayee[])
   }
   if (bySender && !byMethod) {
     return { status: "details_changed", payeeId: bySender.payeeId, priorNickname: bySender.recipientNickname };
+  }
+  if (byMethod && !bySender && request.allowAnySender) {
+    return { status: "resolved", payeeId: byMethod.payeeId, recipientNickname: byMethod.recipientNickname };
   }
   if (byMethod && !bySender) {
     return { status: "unknown_sender", payeeId: byMethod.payeeId, knownNickname: byMethod.recipientNickname };

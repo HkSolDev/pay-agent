@@ -4,7 +4,7 @@ import { QueueView, type QueueItem } from "./queue-view";
 import type { ReviewEmail } from "./review-drawer-model";
 import { fetchRazorpayBalance } from "../../worker/src/razorpay-balance";
 import { isSyncPaused } from "../../worker/src/sync-state";
-import { syncNowAction, togglePauseAction } from "./actions";
+import { syncNowAction, togglePauseAction, reevaluatePolicyAction, resumeAutoPayAction } from "./actions";
 
 async function loadRazorpayBalance() {
   const { RAZORPAY_KEY_ID: keyId, RAZORPAY_KEY_SECRET: keySecret, RAZORPAY_ACCOUNT_NUMBER: accountNumber } = process.env;
@@ -146,6 +146,9 @@ export default async function QueuePage() {
           approvedCount: approvedPayeeCount,
           activeRailCount: activeRailCount,
         }}
+        autoPayModeOn={process.env.AUTO_PAY_MODE === "on"}
+        reevaluatePolicyAction={reevaluatePolicyAction}
+        resumeAutoPayAction={resumeAutoPayAction}
       />
     </main>
   );

@@ -35,6 +35,12 @@ export interface PolicyInput {
 const CONFIDENCE_BAR = 0.9;
 const VERIFIER_SCORE_BAR = 80;
 
+// Named so callers that need to distinguish these two runtime/config
+// switches from every other (data-driven) blocker below don't have to
+// re-type or guess the exact reason text.
+export const GLOBAL_PAUSE_REASON = "Global pause is enabled.";
+export const PAYEE_AUTOPAY_DISABLED_REASON = "Auto-pay is not enabled for this payee.";
+
 export function decidePolicy(input: PolicyInput): { decision: PolicyDecision; reasons: string[] } {
   // Quarantine: the most severe outcome, checked first and independent of
   // everything else. FR-16's exact-match rule failing this way (identity
@@ -88,10 +94,27 @@ export function decidePolicy(input: PolicyInput): { decision: PolicyDecision; re
 
   if (!input.amountWithinOwnerCeiling) reasons.push("Amount exceeds the owner's auto-pay ceiling.");
 
-  if (input.paused) reasons.push("Global pause is enabled.");
-  if (input.payeeAutoPayEnabled === false) reasons.push("Auto-pay is not enabled for this payee.");
+  if (input.paused) reasons.push(GLOBAL_PAUSE_REASON);
+  if (input.payeeAutoPayEnabled === false) reasons.push(PAYEE_AUTOPAY_DISABLED_REASON);
 
   if (reasons.length > 0) return { decision: "needs_approval", reasons };
 
   return { decision: "auto_pay", reasons: [] };
+}
+
+// Auto-pay only ever moves INR today — grant caps/usage accounting is
+// INR-denominated, so a USD "auto_pay" would silently misapply those limits.
+// Shared by the normal pipeline (level1-pipeline.ts) and the policy-only
+// re-evaluation path (reevaluate-policy.ts) so the two never drift apart.
+export function applyCurrencyGuard(
+  decision: { decision: PolicyDecision; reasons: string[] },
+  currency: string | undefined,
+): { decision: PolicyDecision; reasons: string[] } {
+  if (currency && currency !== "INR" && decision.decision === "auto_pay") {
+    return {
+      decision: "needs_approval",
+      reasons: [...decision.reasons, "Auto-pay is only supported for INR while grant limits are INR-denominated."],
+    };
+  }
+  return decision;
 }

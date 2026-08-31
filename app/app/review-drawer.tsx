@@ -3,6 +3,29 @@
 import { useEffect, useRef, useState } from "react";
 import { retryReviewProcessing, updateReviewAction } from "./actions";
 import { buildReviewDrawerModel, type ReviewEmail, type ReviewIntent } from "./review-drawer-model";
+import { reviewRetryBlockReason, type ReviewRetryPaymentStatus } from "../../worker/src/review-retry";
+
+// Once a payment has actually been attempted, the review-state actions below
+// (approve/reject/mark-not-invoice/retry processing) stop making sense —
+// they record review state on the email, but the email already went past
+// review into a real payment attempt. reviewRetryBlockReason is the same
+// gate the server action itself enforces (worker/src/review-retry.ts); the
+// UI mirrors it here so the drawer never offers a button that would just
+// throw a server error on submit.
+function paymentAttemptNotice(status: string | undefined): string | null {
+  switch (status) {
+    case "claimed":
+      return "A payment is currently being processed for this invoice. Review actions are unavailable until it resolves.";
+    case "paid":
+      return "This invoice has already been paid. There is nothing left to approve, reject, or reprocess.";
+    case "failed":
+      return "A payment attempt for this invoice failed. Use the Retry button on the payment card (not these review actions) to try again.";
+    case "unknown_outcome":
+      return "A payment was attempted and its outcome is still unconfirmed at the provider. Review actions are unavailable until it's reconciled.";
+    default:
+      return null;
+  }
+}
 
 function stateLabel(state: "pass" | "review" | "fail" | "unknown") {
   switch (state) {
@@ -30,6 +53,11 @@ export function ReviewDrawer({
 }) {
   const model = buildReviewDrawerModel(email, intent);
   const closeRef = useRef<HTMLButtonElement>(null);
+  // The same real gate the server actions enforce (reviewRetryBlockReason) —
+  // used here only to decide what the drawer *offers*, not to duplicate its
+  // own logic; the server call remains the actual enforcement point.
+  const paymentAlreadyAttempted = reviewRetryBlockReason((intent?.status ?? null) as ReviewRetryPaymentStatus) !== null;
+  const notice = paymentAttemptNotice(intent?.status);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -60,7 +88,9 @@ export function ReviewDrawer({
               {model.email.subject}
             </h3>
             <p className="drawer-subtitle">
-              Review evidence only. Payment execution stays manual and separate.
+              {paymentAlreadyAttempted
+                ? "Review evidence only — a payment for this invoice has already been attempted (see below)."
+                : "Review evidence only. Payment execution stays manual and separate."}
             </p>
           </div>
           <button
@@ -220,28 +250,34 @@ export function ReviewDrawer({
 
         {/* ── Sticky footer actions ── */}
         <div className="drawer-actions" aria-label="Owner review actions">
-          <p>These actions record review state only. None approves an automatic payment.</p>
-          <div className="action-row">
-            <form action={updateReviewAction}>
-              <input type="hidden" name="emailId" value={email.id} />
-              <input type="hidden" name="action" value="approve" />
-              <button type="submit" className="primary-action">Approve for review</button>
-            </form>
-            <form action={updateReviewAction}>
-              <input type="hidden" name="emailId" value={email.id} />
-              <input type="hidden" name="action" value="reject" />
-              <button type="submit" className="secondary-action">Reject</button>
-            </form>
-            <form action={updateReviewAction}>
-              <input type="hidden" name="emailId" value={email.id} />
-              <input type="hidden" name="action" value="not_an_invoice" />
-              <button type="submit" className="secondary-action">Mark not an invoice</button>
-            </form>
-            <form action={retryReviewProcessing}>
-              <input type="hidden" name="emailId" value={email.id} />
-              <button type="submit" className="secondary-action">Retry processing</button>
-            </form>
-          </div>
+          {paymentAlreadyAttempted ? (
+            <p className="drawer-payment-notice">{notice}</p>
+          ) : (
+            <>
+              <p>These actions record review state only. None approves an automatic payment.</p>
+              <div className="action-row">
+                <form action={updateReviewAction}>
+                  <input type="hidden" name="emailId" value={email.id} />
+                  <input type="hidden" name="action" value="approve" />
+                  <button type="submit" className="primary-action">Approve for review</button>
+                </form>
+                <form action={updateReviewAction}>
+                  <input type="hidden" name="emailId" value={email.id} />
+                  <input type="hidden" name="action" value="reject" />
+                  <button type="submit" className="secondary-action">Reject</button>
+                </form>
+                <form action={updateReviewAction}>
+                  <input type="hidden" name="emailId" value={email.id} />
+                  <input type="hidden" name="action" value="not_an_invoice" />
+                  <button type="submit" className="secondary-action">Mark not an invoice</button>
+                </form>
+                <form action={retryReviewProcessing}>
+                  <input type="hidden" name="emailId" value={email.id} />
+                  <button type="submit" className="secondary-action">Retry processing</button>
+                </form>
+              </div>
+            </>
+          )}
         </div>
 
       </aside>
