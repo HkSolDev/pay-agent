@@ -23,62 +23,88 @@ export default async function PayeesPage() {
 
   return (
     <main className="shell">
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">PERFLO AP AGENT</p>
-          <h1>Payees</h1>
+      {/* Header */}
+      <header style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "16px", marginBottom: "22px", flexWrap: "wrap" }}>
+        <div style={{ minWidth: 0 }}>
+          <p className="eyebrow">Perflo AP Agent</p>
+          <h1 style={{ margin: 0, fontSize: "32px" }}>Payees</h1>
         </div>
-        <Link href="/" className="text-button">Back to queue</Link>
+        <Link href="/" className="btn btn-secondary" style={{ textDecoration: "none", whiteSpace: "nowrap", flexShrink: 0 }}>
+          ← Back to queue
+        </Link>
       </header>
 
-      <section className="notice" aria-label="Payment execution boundary">
-        <strong>Setup only</strong>
-        <span>Approving a payee, rail, or grant here never sends a payment. Manual payment stays a separate, explicit step in the review queue.</span>
+      {/* Setup-only notice */}
+      <div className="setup-notice" aria-label="Payment execution boundary">
+        {/* shield icon terracotta */}
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--color-accent-700)" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+          <path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z" />
+          <path d="M12 8v4" />
+          <circle cx="12" cy="15.5" r="0.6" fill="currentColor" />
+        </svg>
+        <span style={{ fontSize: "13px" }}>
+          <strong>Setup only</strong> — approving a payee, rail, or grant here never sends a payment. Manual payment stays a separate, explicit step in the review queue.
+        </span>
+      </div>
+
+      {/* Add Payee Card */}
+      <section
+        className="card elev-sm"
+        style={{ marginBottom: "24px" }}
+        aria-labelledby="add-payee-heading"
+      >
+        <p className="card-kicker" style={{ margin: 0 }}>New payee</p>
+        <h2 id="add-payee-heading" style={{ margin: "0 0 14px", fontSize: "20px" }}>
+          Add payee
+        </h2>
+        <PayeeForm />
       </section>
 
-      <section className="card" aria-labelledby="add-payee-heading">
-        <div className="card-heading">
+      {/* Payees List Card */}
+      <section
+        className="card elev-sm"
+        aria-labelledby="payees-heading"
+      >
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "12px" }}>
           <div>
-            <p className="eyebrow">NEW PAYEE</p>
-            <h2 id="add-payee-heading">Add payee</h2>
+            <p className="card-kicker" style={{ margin: 0 }}>Approved</p>
+            <h2 id="payees-heading" style={{ margin: 0, fontSize: "20px" }}>Payees</h2>
           </div>
+          <span className="tag tag-neutral">{payees.length} payees</span>
         </div>
-        <div style={{ padding: 24 }}>
-          <PayeeForm />
-        </div>
-      </section>
 
-      <section className="card" aria-labelledby="payees-heading" style={{ marginTop: 24 }}>
-        <div className="card-heading">
-          <div>
-            <p className="eyebrow">APPROVED</p>
-            <h2 id="payees-heading">Payees</h2>
-          </div>
-          <span className="count">{payees.length} payees</span>
-        </div>
-        <div style={{ padding: 24, display: "grid", gap: 20 }}>
-          {payees.length === 0 ? (
-            <p className="empty-copy">No payees yet.</p>
-          ) : (
-            payees.map((payee) => (
-              <div key={payee.id} className="drawer-section" style={{ padding: 16, border: "1px solid var(--line)", borderRadius: 8 }}>
-                <div className="section-heading">
-                  <h3>{payee.name}</h3>
-                  <span className={`state-pill ${payee.status === "approved" ? "pass" : payee.status === "revoked" ? "fail" : "review"}`}>
+        {payees.length === 0 ? (
+          <p className="empty-copy" style={{ marginTop: "16px" }}>No payees yet.</p>
+        ) : (
+          <div className="payees-list">
+            {payees.map((payee) => (
+              <div key={payee.id} className="payee-block">
+                {/* Name + status tag */}
+                <div className="payee-block-header">
+                  <h3 style={{ margin: 0 }}>{payee.name}</h3>
+                  <span
+                    className={`tag ${payee.status === "approved" ? "tag-accent-2" : "tag-neutral"}`}
+                  >
                     {payee.status}
                   </span>
                 </div>
-                <p className="subtle-facts">
+
+                {/* Meta row */}
+                <div className="payee-meta-row">
                   <span>Recipient: <strong>{payee.recipientNickname}</strong></span>
                   <span>Per-payment cap: <strong>{payee.grantPerPaymentCapInr ?? "—"}</strong></span>
                   <span>Total cap: <strong>{payee.grantTotalCapInr ?? "—"}</strong></span>
                   <span>Max payments: <strong>{payee.grantMaxPayments ?? "—"}</strong></span>
                   <span>Expires: <strong>{payee.grantExpiresAt ? payee.grantExpiresAt.toLocaleDateString() : "—"}</strong></span>
-                </p>
-                <p className="subtle-facts">
+                </div>
+
+                {/* Sender identities */}
+                <div className="payee-meta-row">
                   <span>Sender identities: <strong>{payee.identities.map((i) => i.senderAddr).join(", ") || "none"}</strong></span>
-                </p>
-                <div className="attachment-list" style={{ marginTop: 12 }}>
+                </div>
+
+                {/* Rails */}
+                <div className="rails-list">
                   {payee.paymentMethods.map((method) => (
                     <PayeeRailRow
                       key={method.id}
@@ -90,9 +116,9 @@ export default async function PayeesPage() {
                   ))}
                 </div>
               </div>
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </section>
     </main>
   );
