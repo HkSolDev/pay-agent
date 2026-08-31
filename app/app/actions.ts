@@ -6,6 +6,7 @@ import { prisma, Prisma } from "@perflo-ap-agent/db";
 import { validatePaymentInput } from "../../worker/src/validate-payment-input";
 import { executePreparedPayment } from "../../worker/src/payment-execution";
 import { isSyncPaused, setSyncPaused } from "../../worker/src/sync-state";
+import { reviewRetryBlockReason } from "../../worker/src/review-retry";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -84,6 +85,14 @@ export async function updateReviewAction(formData: FormData): Promise<void> {
 export async function retryReviewProcessing(formData: FormData): Promise<void> {
   const emailId = String(formData.get("emailId") ?? "").trim();
   if (!emailId) throw new Error("The email to retry is missing.");
+
+  const intent = await prisma.paymentIntent.findUnique({
+    where: { emailId },
+    select: { status: true },
+  });
+  const blockedReason = reviewRetryBlockReason(intent?.status ?? null);
+  if (blockedReason) throw new Error(blockedReason);
+
   await prisma.email.update({
     where: { id: emailId },
     data: {
@@ -99,6 +108,14 @@ export async function retryReviewProcessing(formData: FormData): Promise<void> {
       policyReasons: [],
       level1ProcessedAt: null,
     },
+  });
+  // `ingest.ts` pulls in the Gmail/Composio SDK and cannot be bundled into a
+  // Next server action. Run the review-only worker entrypoint separately, as
+  // Sync now does; it disables auto-pay for this reprocessing path.
+  const repoRoot = path.resolve(process.cwd(), "..");
+  await execFileAsync("pnpm", ["exec", "tsx", "worker/src/retry-level1-cli.ts", emailId], {
+    cwd: repoRoot,
+    timeout: 30_000,
   });
   revalidatePath("/");
 }
