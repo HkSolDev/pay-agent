@@ -1,20 +1,106 @@
 # Perflo AP Agent — Hands-off Handoff
 
-Last verified: 2026-08-31 (second session this day — design implementation, Sync now/Pause, auto-pay)
+Last verified: 2026-08-31 (third session this day — runtime vs. permanent policy blockers, "Re-evaluate policy" / "Resume auto-pay")
 Branch: `codex/level1-edge-case-review`, pushed to `origin` (all 3 commits below are on GitHub).
 **Branch state warning, read before doing anything else:** `main` has moved on independently since this branch's last merge (PR #6) — `main` now has three additional "Level 0" commits (`8730e03`, `547579e`, `161b90e`) that are **not** on this branch. This branch, in turn, has 9 commits main doesn't have (the dashboard redesign, payment-reconciliation work, and this session's 3 commits). **No PR is currently open for this branch's new work** — one needs to be opened, and it will very likely need a rebase/merge against `main`'s new Level 0 commits first. Do not assume this branch and `main` are still in sync the way the previous version of this doc claimed.
+
+## Session summary — 2026-08-31, third session (runtime vs. permanent policy blockers)
+
+**Not yet committed** — working-tree changes only as of this entry; commit when the user asks, don't assume.
+
+**The problem this session fixed:** `AUTO_PAY_MODE` is a runtime env-var switch, but `policy-engine.ts`'s `"Global pause is enabled."` reason used to get written once into an invoice's `policyReasons` at ingest/reprocess time and never refreshed. Flipping `AUTO_PAY_MODE=on` and restarting the worker only affected *new* ingestion — invoices already sitting in the queue kept showing the stale pause reason forever, with no way to refresh them short of a full re-extraction (`retryReviewProcessing`, which itself deliberately never pays). Confirmed live: after setting `AUTO_PAY_MODE=on` and restarting the worker, the queue still showed 12+ invoices blocked by "Global pause is enabled." with no way to tell whether that was current or stale.
+
+**What was built**, all new files unless noted:
+- `worker/src/policy-engine.ts` — exported `GLOBAL_PAUSE_REASON`/`PAYEE_AUTOPAY_DISABLED_REASON` constants (previously inline strings other code would have had to guess/re-type) and moved the INR-only currency guard here as `applyCurrencyGuard`, shared between `level1-pipeline.ts` and the new re-evaluation path so they can't drift apart.
+- `worker/src/reevaluate-policy.ts` — `reevaluatePolicy(emailId)`: recomputes `decidePolicy`'s output from what's **already stored** on the `Email` row (extraction summary, payee resolution, verification result, duplicate result) — no re-extraction, no re-classification, no LLM call. Only two things are read fresh: the current `AUTO_PAY_MODE` value and the resolved payee's *current* grant/auto-pay-toggle state (via an injected `loadApprovedPayees`/`loadPayeeUsage`, same DI pattern as `IngestDeps`). Persists only `policyDecision`/`policyReasons` — never touches `PaymentIntent`, **never pays**. Same `reviewRetryBlockReason` guard as the existing retry path (refuses to touch a claimed/paid/failed intent). See the file's "rail-trust note" comment for an honest limitation: it trusts the *original* rail match rather than re-verifying sender/rail from scratch — a full re-verification is what `retryLevel1Processing` is still for.
+- `worker/src/resume-auto-pay.ts` — `resumeAutoPayForEligibleInvoices()`: the one explicit, narrowly-scoped action that can actually turn a re-evaluated `auto_pay` decision into a real payment. Only considers invoices whose **currently stored** `policyReasons` is *exactly* `[GLOBAL_PAUSE_REASON]` — an invoice blocked by pause *and* something else, or blocked only by the payee's own auto-pay toggle, is left untouched. Re-checks every guardrail live via `reevaluatePolicy` before paying anything, then calls the existing `runAutoPayIfEligible` (same idempotent claim-then-execute path as normal ingest-time auto-pay) — no new payment logic was written. Accepts an optional `scopeToEmailIds` filter used only by tests, so tests never scan/touch whatever real invoices are sitting in the shared local dev DB.
+- `app/app/actions.ts`, `app/app/page.tsx`, `app/app/queue-view.tsx` — two new server actions (`reevaluatePolicyAction`, `resumeAutoPayAction`), both run **in-process** (no `execFile` subprocess) since neither new worker module touches the Gmail/Composio SDK, same reasoning as `confirmPayment`. UI: a live `Auto-pay: live` / `Auto-pay: globally paused` badge (computed fresh from `process.env.AUTO_PAY_MODE` on every page render, not read from any stored field), a "Resume auto-pay for N eligible invoices" button next to it, and a per-card distinction — an invoice blocked *only* by the pause gets a neutral note + "Re-evaluate policy" button instead of the same alarm-colored warning pill used for real (permanent) blockers.
+- Tests: `worker/src/reevaluate-policy.test.ts`, `worker/src/resume-auto-pay.test.ts` (new, 12 tests total), plus 1 new case in `worker/src/policy-engine.test.ts` for the exported constants. Both new integration test files construct `ApprovedPayee` objects **in memory** rather than through the real encrypted payee-store — deliberately, because this local dev DB has a pre-existing payee with a rail encrypted under a different key (see "A verification lesson" section below / the 4 known pre-existing failures), and `loadApprovedPayees()` throws for the *entire* table if even one row fails to decrypt. Confirmed by hand that this session's test runs never mutated the real queue's invoices (checked before/after with a throwaway script, diffed identical).
+
+**A real bundler bug found and fixed along the way, not just this feature's own code:** Next's Turbopack (unlike `tsc`) does not remap an explicit `.js` import specifier to a sibling `.ts` file. `worker/src/reevaluate-policy.ts` and `resume-auto-pay.ts` were the first files to pull the `.js`-suffixed-import part of `worker/src` (`policy-engine.ts`, `payee-store.ts`, `payment-usage.ts`, `auto-pay-eligibility.ts`, `review-retry.ts`, `auto-pay-runner.ts`) into the Next app's bundle via `actions.ts`. Fixed by switching those files' own imports to the extensionless convention already used by every other worker file reachable from `app/app/actions.ts` (see the existing "Turbopack import-extension gotcha" section further down this file — this is the same rule, just newly triggered by a new import edge). `auto-pay-runner.ts`'s two value imports (`auto-pay-gate`, `payment-execution`) needed the same fix since it's now newly reachable via `resume-auto-pay.ts`.
+
+**Verification:** `pnpm typecheck` clean, `pnpm --dir app build` clean (this specifically caught the Turbopack bug above — dev-server console errors alone were ambiguous/cache-confused, `next build` gave a deterministic repro). `pnpm test`: 279/283 passing, same 4 pre-existing local-fixture failures as before (unrelated). Live-verified in the browser: clicked "Re-evaluate policy" on a stale invoice, its pause warning disappeared and the "Resume auto-pay for N" count dropped accordingly — the full chain works end-to-end, though the actual **payment execution** itself (clicking "Resume auto-pay" and watching a real RazorpayX sandbox payout happen) was not exercised live this session — only the recompute step was.
+
+**Not done / next:** commit this work (currently uncommitted); the four pre-existing encrypted-payee test failures are still unresolved (unrelated, documented below).
+
+### Same session, continued — auto-pay live-verified end-to-end, three real UI bugs found and fixed
+
+**Auto-pay finally verified live, end-to-end, for real:** with `AUTO_PAY_MODE=on` and the test payee's toggle on, three fresh invoices (`INV-DEMO-2026-05/06/07`) were sent and auto-paid automatically with no manual click — the first time this has actually been observed working, not just unit-tested. Each landed at RazorpayX's `processing` state (a real sandbox API call, not a mock).
+
+**Corrected a wrong assumption, confirmed against RazorpayX's live docs, not memory or the earlier session's notes:** the user asked to have `processing` invoices automatically marked `paid` in the database, on the theory that "processing" in test mode means the payment already went through. Fetched `https://razorpay.com/docs/x/dashboard/test-mode` directly and quoted the exact current text back:
+
+> "From the processing state, you will have to manually move the payout to the next state from the Dashboard... Unlike the Live Mode, this does not happen automatically."
+
+This confirms the earlier session's finding still holds and is not stale. **Refused the request** to mark `processing` payouts as `paid` — that would misrepresent an unconfirmed payment as settled, directly against this app's own FR-27 no-false-positive rule. Explained the correct path instead: manually advance the payout in the RazorpayX Test Mode dashboard; the existing `payment-reconcile.ts` poller then picks up the real status automatically on its next cycle — no code change needed for that part. **The user then did this manually** for the three test invoices, and the reconciliation poller correctly moved all three to `paid` on its own, exactly as designed — this is the first live confirmation that `payment-reconcile.ts`'s poller actually works end-to-end against a real state transition, not just its own unit tests.
+
+**Bug 1 — review drawer offered nonsensical actions on an already-paid/in-flight invoice.** Opening "Review row" on an invoice that had already auto-paid (or was still `processing`) showed the same "Approve for review / Reject / Mark not an invoice / Retry processing" footer as an untouched invoice, with copy claiming "None approves an automatic payment" — false once a payment already happened. Fixed in `app/app/review-drawer.tsx`: added `paymentAttemptNotice()` and reused the existing `reviewRetryBlockReason` gate (`worker/src/review-retry.ts`) client-side to decide when to hide the whole action row and show a plain-language status notice instead (e.g. "A payment was attempted and its outcome is still unconfirmed at the provider. Review actions are unavailable until it's reconciled."). The header subtitle also changes conditionally. New CSS: `.drawer-payment-notice` in `globals.css`.
+
+**Bug 2 — the "needs approval" tag stayed on invoices that had already auto-paid or were mid-payment.** `app/app/queue-view.tsx`'s `isNeedsApproval` (duplicated 3x — KPI counts, tab filter, per-card tag) has a catch-all fallback (`classification !== "ignored" && policyDecision !== "ignore"`) that doesn't check payment-intent state at all, so a row with `policyDecision: "auto_pay"` and an in-flight `PaymentIntent` still showed "needs approval" everywhere. User caught this live via a screenshot. Fixed by adding a shared `hasPaymentAttempt(status)` helper (true for anything past `"pending"`) and `&& !hasPaymentAttempt(...)` at all three call sites — confirmed live: the "Needs approval" count dropped from 14 to 8 immediately, and the two in-flight rows now show only their real `PaymentCell` status pill, no contradictory tag.
+
+**Bug 3 — a paid invoice still displayed its stale pre-payment policy warnings.** A manually-paid invoice (`DEMO-9001`, paid via "Confirm & pay" despite several review-time warnings — an intentional human override, not a bug) kept showing all of those original warning pills (low confidence, unresolved payee, auth misalignment, etc.) forever, reading as active problems on a completed payment. User caught this live too. Fixed in `queue-view.tsx`: `warnings` (and the pause-only special case, `blockedOnlyByPause`) are now forced empty once `intent?.status === "paid"` — the reasons described review-time state, which is moot once money has actually moved. Confirmed live: `DEMO-9001` now renders cleanly with just its "approved"/"Paid" tag, matching the other two paid rows.
+
+**Verification:** `pnpm typecheck` clean after each fix. `pnpm test`: still 279/283, same 4 pre-existing unrelated failures. All three bugs reproduced and re-verified live in the browser (screenshots, not just code review) before and after each fix.
 
 ## Read this first (new chat window / new AI session)
 
 Before touching this repo, read in this order:
 
-1. This file (`hands-off.md`) in full — it is the authoritative "what actually happened and why," not just a task list. **Read "Session summary — 2026-08-31, second session" first** — it's the most recent work and sits above the older session summaries below it.
+1. This file (`hands-off.md`) in full — it is the authoritative "what actually happened and why," not just a task list. **Read "Session summary — 2026-08-31, third session" first** — it's the most recent work and sits above the older session summaries below it.
 2. `README.md` and `tests/README.md` — current commands, test count, and the parallel-test-key-collision note (see "Known flakiness" below — don't mistake it for a real regression).
 3. `packages/db/prisma/schema.prisma` — the real persistence boundaries; trust this over any prose description of a model shape.
 4. `worker/src/payment-executor.ts` and `worker/src/payment-reconcile.ts` — the provider-neutral payment interface and the reconciliation poller; read the former's file-header comment on the RBI/PPI/escrow boundary before proposing anything involving holding funds.
 5. `worker/src/policy-engine.ts`, `worker/src/level1-pipeline.ts`, and `worker/src/auto-pay-gate.ts`/`auto-pay-runner.ts` — the new auto-pay path (this session). Read before touching anything payment-related; this is the highest-blast-radius code in the repo.
 6. **Do not trust any of the above blindly** — this handoff was itself corrected mid-session after a "confirmed bug" turned out to be stale/corrupted local Postgres state, not a real code defect (see "A verification lesson from this session" below). Re-run `pnpm test` and the demo reseed commands yourself before accepting any claim here as still true.
 7. **There is currently no login/auth of any kind on the Next.js app.** Anyone with the deployed URL can view every invoice and click "Confirm & pay," which makes a real (sandbox) RazorpayX API call. If this gets deployed publicly (Railway, etc.), password-protect it at the host level before sharing the link — this is not yet fixed in code.
+
+## Current working state — 2026-08-31, documentation addendum
+
+This addendum supersedes older test counts and older statements that describe auto-pay as only a policy label. Auto-pay execution is now wired, but it is still deliberately disabled in the local environment and has not been live-tested end-to-end.
+
+### Objective and intended flow
+
+The demo is intended to show an explainable email-to-payment pipeline for a job assignment:
+
+```text
+email → MIME/PDF parse → classify → extract amount/currency/payee
+      → resolve approved encrypted rail → verify/authenticate
+      → duplicate check → policy/grant checks → review queue
+      → manual payment, or automatic payment only when every gate passes
+```
+
+The important outcome is safe routing to the exact registered payee rail. A sender may provide invoice details in the demo, but the payment destination and amount used for execution must come from the persisted resolution/extraction records, not from editable browser form values.
+
+### Explicit safety state
+
+The safe state is:
+
+```text
+AUTO_PAY_MODE=       # OFF: no invoice can execute automatically
+DEMO_MODE=true       # local demo only: allows a different test sender to match a registered rail
+payee.autoPayEnabled=false
+```
+
+`DEMO_MODE` does not turn on payment and must not be used in production. Production sender/domain verification remains enabled when `DEMO_MODE` is unset or false. Auto-pay requires both `AUTO_PAY_MODE=on` and the selected payee's toggle, followed by all confidence, authentication, duplicate, currency, exact-rail, grant-limit, expiry, and owner-ceiling checks. The UI warning **Global pause is enabled** is the visible result of `AUTO_PAY_MODE` being off; it is not a separate third switch. The UI's `Pause syncing` control is different: it stops new Gmail ingestion, while `AUTO_PAY_MODE` prevents automatic money movement. Reconciliation of an already-started payment can still run while syncing is paused.
+
+### Why the latest code changes exist
+
+- `app/app/actions.ts` now derives payment preparation and retry values from the database's resolved payee and extraction summary. This fixes the observed `demo-test-auto` routing failure, where a UI nickname did not match the registered encrypted rail, and prevents stale form values from selecting a different recipient or amount.
+- `worker/src/payee-resolver.ts` and `worker/src/level1-pipeline.ts` support a local-only demo sender relaxation. This lets a second mailbox test the full flow against a registered demo payee without weakening production verification.
+- `worker/src/auto-pay-runner.ts` and `worker/src/ingest.ts` carry the extracted currency into the shared payment executor. `worker/src/level1-pipeline.ts` holds non-INR auto-pay for review because the current grant/RazorpayX path is INR-only.
+- `worker/src/sync.ts` overlaps the Gmail checkpoint by ten minutes. Gmail/indexing lag can otherwise cause a message arriving near a checkpoint to be skipped permanently; email IDs make the overlap idempotent.
+- Source-backed invoice reference confidence, retry processing, real Sync now/Pause syncing, reconciliation, and per-payee auto-pay gates were kept explicit so each decision is reviewable and the manual fallback remains available.
+
+### Latest verification and known limits
+
+- `pnpm typecheck` and `pnpm build` pass.
+- Focused resolver/pipeline/policy tests pass 23/23.
+- The latest full run was 271 passed and 4 failed out of 275 with `--no-file-parallelism`; the four failures are stale encrypted-payee fixture/database-state failures in the local Postgres instance. Re-run after a clean database/fixture reset before treating them as a regression.
+- Browser/email testing found `INV-DEMO-2026-04`, resolved it to the registered demo payee, and correctly held it at `needs_approval` because auto-pay was off. No automatic payment was intentionally triggered.
+- There is still no app authentication. Perflo KYC is still pending. RazorpayX test-mode payouts can remain processing until manually advanced in the RazorpayX test dashboard.
+
+### Controlled sandbox demonstration only
+
+If an explicit end-to-end auto-pay demonstration is required, use one registered test payee and a fresh matching INR invoice: enable that payee, set `AUTO_PAY_MODE=on`, restart the worker, verify the queue record and exact rail, observe the RazorpayX test-mode result, then set the global switch back to blank/off and disable the payee. Never make all payees auto-pay by default, never remove production sender verification, and never use live provider credentials for this demonstration.
 
 ## Session summary — 2026-08-31, second session (design implementation, Sync now/Pause, auto-pay)
 
