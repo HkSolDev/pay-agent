@@ -81,6 +81,11 @@ model Email {
 model IngestCheckpoint {
   id                Int      @id @default(1)
   sinceEpochSeconds Int      @map("since_epoch_seconds")
+  // Owner-controlled kill switch for background Gmail polling (the "Paused"
+  // button) — the worker's poll loop checks this before every fetch. Lives
+  // on this single-row table rather than a new one since it's the same
+  // "where sync currently stands" concept the checkpoint already tracks.
+  paused            Boolean  @default(false)
   updatedAt         DateTime @updatedAt @map("updated_at")
 
   @@map("ingest_checkpoint")

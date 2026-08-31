@@ -3,6 +3,8 @@ import { prisma } from "@perflo-ap-agent/db";
 import { QueueView, type QueueItem } from "./queue-view";
 import type { ReviewEmail } from "./review-drawer-model";
 import { fetchRazorpayBalance } from "../../worker/src/razorpay-balance";
+import { isSyncPaused } from "../../worker/src/sync-state";
+import { syncNowAction, togglePauseAction } from "./actions";
 
 async function loadRazorpayBalance() {
   const { RAZORPAY_KEY_ID: keyId, RAZORPAY_KEY_SECRET: keySecret, RAZORPAY_ACCOUNT_NUMBER: accountNumber } = process.env;
@@ -15,12 +17,13 @@ async function loadRazorpayBalance() {
 }
 
 export default async function QueuePage() {
-  const [emails, intents, approvedPayeeCount, activeRailCount, razorpayBalance] = await Promise.all([
+  const [emails, intents, approvedPayeeCount, activeRailCount, razorpayBalance, syncPaused] = await Promise.all([
     prisma.email.findMany({ orderBy: { date: "desc" }, take: 50 }),
     prisma.paymentIntent.findMany(),
     prisma.payee.count({ where: { status: "approved" } }),
     prisma.payeePaymentMethod.count({ where: { status: "active" } }),
     loadRazorpayBalance(),
+    isSyncPaused(),
   ]);
   const intentByEmailId = new Map(intents.map((intent) => [intent.emailId, intent]));
 
@@ -93,21 +96,25 @@ export default async function QueuePage() {
             Payees
             <span className="tag tag-neutral">{approvedPayeeCount}</span>
           </Link>
-          <button type="button" className="btn btn-secondary" disabled>
-            {/* refresh icon */}
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 4v5h5" /><path d="M20 20v-5h-5" />
-              <path d="M5 9a7 7 0 0112-3.5M19 15a7 7 0 01-12 3.5" />
-            </svg>
-            Sync now
-          </button>
-          <button type="button" className="btn btn-paused" disabled>
-            {/* moon icon */}
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M20 14.5A8 8 0 119.5 4a6.5 6.5 0 0010.5 10.5z" />
-            </svg>
-            Paused
-          </button>
+          <form action={syncNowAction}>
+            <button type="submit" className="btn btn-secondary" disabled={syncPaused}>
+              {/* refresh icon */}
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 4v5h5" /><path d="M20 20v-5h-5" />
+                <path d="M5 9a7 7 0 0112-3.5M19 15a7 7 0 01-12 3.5" />
+              </svg>
+              Sync now
+            </button>
+          </form>
+          <form action={togglePauseAction}>
+            <button type="submit" className="btn btn-paused">
+              {/* moon icon */}
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 14.5A8 8 0 119.5 4a6.5 6.5 0 0010.5 10.5z" />
+              </svg>
+              {syncPaused ? "Resume syncing" : "Pause syncing"}
+            </button>
+          </form>
         </div>
       </header>
 

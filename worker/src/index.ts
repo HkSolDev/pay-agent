@@ -1,9 +1,7 @@
 import "dotenv/config";
-import { prisma } from "@perflo-ap-agent/db";
-import { fetchNewGmailMessages, isGmailConnected } from "./gmail.js";
-import { ingestGmailMessages, processPendingLevel1 } from "./ingest.js";
-import { createRazorpayExecutor } from "./payment-executor-razorpay.js";
-import { reconcileStuckPayments } from "./payment-reconcile.js";
+import { razorpayExecutorFromEnv, reconcileStuckPayments } from "./payment-reconcile.js";
+import { syncOnce } from "./sync.js";
+import { isSyncPaused } from "./sync-state.js";
 
 // PRD FR-1 default is 5 minutes; overridable for testing (POLL_INTERVAL_SECONDS=90
 // while watching new mail arrive live). Cron syntax can't express "every 90
@@ -11,61 +9,25 @@ import { reconcileStuckPayments } from "./payment-reconcile.js";
 // interval, not a cron expression. Nothing here needs cron's calendar features.
 const POLL_INTERVAL_SECONDS = Number(process.env.POLL_INTERVAL_SECONDS ?? 300);
 
-const CHECKPOINT_ID = 1;
-
-// Same credentials app/app/actions.ts reads to decide whether RazorpayX is
-// configured — unset simply means there is nothing to reconcile (the Perflo
-// CLI path has no status-polling command at all; see payment-executor-perflo.ts).
-const razorpayExecutor =
-  process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET && process.env.RAZORPAY_ACCOUNT_NUMBER
-    ? createRazorpayExecutor({
-        keyId: process.env.RAZORPAY_KEY_ID,
-        keySecret: process.env.RAZORPAY_KEY_SECRET,
-        accountNumber: process.env.RAZORPAY_ACCOUNT_NUMBER,
-      })
-    : null;
-
-// Durable across restarts (`ingest_checkpoint`, single row) — a killed and
-// restarted worker (which happens constantly in dev) must resume from where
-// it left off, not jump to "now" and silently skip whatever arrived in the gap.
-async function loadCheckpoint(): Promise<number> {
-  const row = await prisma.ingestCheckpoint.findUnique({ where: { id: CHECKPOINT_ID } });
-  return row?.sinceEpochSeconds ?? Math.floor(Date.now() / 1000);
-}
-
-async function saveCheckpoint(sinceEpochSeconds: number): Promise<void> {
-  await prisma.ingestCheckpoint.upsert({
-    where: { id: CHECKPOINT_ID },
-    create: { id: CHECKPOINT_ID, sinceEpochSeconds },
-    update: { sinceEpochSeconds },
-  });
-}
-
-let sinceEpochSeconds: number;
+const razorpayExecutor = razorpayExecutorFromEnv();
 
 async function pollOnce() {
-  const startedAt = Math.floor(Date.now() / 1000);
-  try {
-    // Checked explicitly rather than assumed: Composio's own docs don't
-    // clearly say what an unconnected tool call does, so we don't rely on
-    // implicit behavior — run `pnpm connect-gmail` once, by hand, first.
-    if (!(await isGmailConnected())) {
-      console.log("[ingest] Gmail not connected yet — run `pnpm connect-gmail`. Skipping poll.");
-      return;
+  // The owner's "Paused" toggle only affects picking up new mail — payment
+  // reconciliation below still runs regardless, since that's resolving
+  // payments already in flight, not starting anything new.
+  if (await isSyncPaused()) {
+    console.log("[ingest] paused — skipping poll.");
+  } else {
+    try {
+      const result = await syncOnce();
+      if (!result.ran) {
+        console.log(`[ingest] ${result.reason}`);
+      } else {
+        console.log(`[ingest] fetched ${result.fetched}, inserted ${result.inserted}, skipped ${result.skipped} (duplicates)`);
+      }
+    } catch (err) {
+      console.error("[ingest] poll failed, will retry next tick:", err);
     }
-
-    const messages = await fetchNewGmailMessages(sinceEpochSeconds);
-    const { inserted, skipped } = await ingestGmailMessages(messages);
-    await processPendingLevel1();
-    console.log(
-      `[ingest] fetched ${messages.length}, inserted ${inserted}, skipped ${skipped} (duplicates)`,
-    );
-    // Only move the checkpoint forward after a successful ingest — if this
-    // poll throws, we want the next one to retry the same window, not skip it.
-    sinceEpochSeconds = startedAt;
-    await saveCheckpoint(sinceEpochSeconds);
-  } catch (err) {
-    console.error("[ingest] poll failed, will retry next tick:", err);
   }
 
   // Independent of the ingest step above and of each other — a failure here
@@ -84,11 +46,7 @@ async function pollOnce() {
 }
 
 async function main() {
-  sinceEpochSeconds = await loadCheckpoint();
-  console.log(
-    `Perflo AP worker starting — polling Gmail every ${POLL_INTERVAL_SECONDS}s, ` +
-      `resuming from checkpoint ${sinceEpochSeconds} (${new Date(sinceEpochSeconds * 1000).toISOString()}).`,
-  );
+  console.log(`Perflo AP worker starting — polling Gmail every ${POLL_INTERVAL_SECONDS}s.`);
 
   // Run once immediately (this is the "manual Sync now" behavior at startup),
   // then hand off to the interval.
