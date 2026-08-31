@@ -1,12 +1,11 @@
 # Perflo AP Agent — Hands-off Handoff
 
 Last verified: 2026-08-31 (third session this day — runtime vs. permanent policy blockers, "Re-evaluate policy" / "Resume auto-pay")
-Branch: `codex/level1-edge-case-review`, pushed to `origin` (all 3 commits below are on GitHub).
-**Branch state warning, read before doing anything else:** `main` has moved on independently since this branch's last merge (PR #6) — `main` now has three additional "Level 0" commits (`8730e03`, `547579e`, `161b90e`) that are **not** on this branch. This branch, in turn, has 9 commits main doesn't have (the dashboard redesign, payment-reconciliation work, and this session's 3 commits). **No PR is currently open for this branch's new work** — one needs to be opened, and it will very likely need a rebase/merge against `main`'s new Level 0 commits first. Do not assume this branch and `main` are still in sync the way the previous version of this doc claimed.
+Branch: `codex/level1-edge-case-review`. **PR #8 is merged into `main`** (merge commit `3f16a68`) — `main` and this branch are byte-identical as of this update (`git diff origin/main..HEAD` is empty). The earlier "3 additional Level 0 commits on main" divergence warning in this line was itself stale by the time it was written — main had already absorbed everything via PR #7's merge before that warning was added — and is now fully resolved either way. If this line is ever stale again, don't trust it blindly: run `git fetch origin && git diff origin/main..HEAD --stat` yourself before assuming anything about sync state.
 
 ## Session summary — 2026-08-31, third session (runtime vs. permanent policy blockers)
 
-**Not yet committed** — working-tree changes only as of this entry; commit when the user asks, don't assume.
+**Committed and merged** — this was "not yet committed" when this line was first written, but was committed (`efe8f18`, `9fce068`), pushed, and merged to `main` via PR #8 later the same session. Left uncorrected here for a few messages, which caused real confusion in a follow-up chat (the doc said "not committed"/"no PR open" while git said otherwise) — lesson: update a status line like this the moment the state changes, not just at write time.
 
 **The problem this session fixed:** `AUTO_PAY_MODE` is a runtime env-var switch, but `policy-engine.ts`'s `"Global pause is enabled."` reason used to get written once into an invoice's `policyReasons` at ingest/reprocess time and never refreshed. Flipping `AUTO_PAY_MODE=on` and restarting the worker only affected *new* ingestion — invoices already sitting in the queue kept showing the stale pause reason forever, with no way to refresh them short of a full re-extraction (`retryReviewProcessing`, which itself deliberately never pays). Confirmed live: after setting `AUTO_PAY_MODE=on` and restarting the worker, the queue still showed 12+ invoices blocked by "Global pause is enabled." with no way to tell whether that was current or stale.
 
@@ -21,7 +20,7 @@ Branch: `codex/level1-edge-case-review`, pushed to `origin` (all 3 commits below
 
 **Verification:** `pnpm typecheck` clean, `pnpm --dir app build` clean (this specifically caught the Turbopack bug above — dev-server console errors alone were ambiguous/cache-confused, `next build` gave a deterministic repro). `pnpm test`: 279/283 passing, same 4 pre-existing local-fixture failures as before (unrelated). Live-verified in the browser: clicked "Re-evaluate policy" on a stale invoice, its pause warning disappeared and the "Resume auto-pay for N" count dropped accordingly — the full chain works end-to-end, though the actual **payment execution** itself (clicking "Resume auto-pay" and watching a real RazorpayX sandbox payout happen) was not exercised live this session — only the recompute step was.
 
-**Not done / next:** commit this work (currently uncommitted); the four pre-existing encrypted-payee test failures are still unresolved (unrelated, documented below).
+**Not done / next:** this work is committed and merged (see the branch-state line at the top). Still open: the four pre-existing encrypted-payee test failures (unrelated, documented below), no login/auth on the app, and live-clicking "Resume auto-pay" itself against a real invoice (only "Re-evaluate policy" was live-verified this session, not the actual payout path — see below).
 
 ### Same session, continued — auto-pay live-verified end-to-end, three real UI bugs found and fixed
 
