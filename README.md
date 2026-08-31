@@ -22,11 +22,47 @@ Gmail ──▶ ingest ──▶ classify ──▶ extract ──▶ resolve pa
                                                        payment executor                 for a manual decision
 ```
 
+### Current implementation diagram
+
+```mermaid
+flowchart LR
+    MAIL["Gmail via Composio"] --> WORKER["Worker\nPoll + Sync"]
+    WORKER --> DB[("PostgreSQL")]
+    DB --> PIPE["Level 1 pipeline\nClassify -> Extract -> Resolve -> Verify -> Duplicate"]
+    PIPE --> POLICY["Deterministic policy engine"]
+    POLICY --> DECISION{"Decision"}
+
+    DECISION -->|ignore| OTHER["Ignored / Other"]
+    DECISION -->|quarantine| QUAR["Quarantine"]
+    DECISION -->|needs_approval| QUEUE["Review queue"]
+    DECISION -->|auto_pay| GATE["Auto-pay gate"]
+
+    GATE -->|global switch + payee toggle + all guards| EXEC["Shared payment execution"]
+    GATE -->|blocked| QUEUE
+    QUEUE --> UI["Next.js dashboard"]
+    UI --> ACTIONS["Server actions"]
+    ACTIONS -->|Prepare + Confirm & pay| EXEC
+    ACTIONS -->|Re-evaluate policy| POLICY
+    ACTIONS -->|Resume pause-only invoices| GATE
+
+    EXEC --> PROVIDER["Perflo or RazorpayX test mode"]
+    PROVIDER --> INTENT[("PaymentIntent\nclaim + idempotency + status")]
+    WORKER --> RECON["Reconciliation poller"]
+    RECON --> PROVIDER
+    RECON --> INTENT
+
+    PAYEES["Payees page\nvalidate + encrypt rails"] --> DB
+    PAYEES --> GATE
+    CONTROLS["AUTO_PAY_MODE\nDEMO_MODE\nPause syncing"] --> WORKER
+    CONTROLS --> POLICY
+    CONTROLS --> GATE
+```
+
 **Payment execution is a swappable interface** (`worker/src/payment-executor.ts`), not hard-coded to one provider. Two adapters exist: **Perflo** (wired but inert — KYC/account access hasn't cleared yet) and **RazorpayX test-mode** (live today). Which one runs is chosen by which environment variables are set; nothing upstream of it — classification, extraction, resolution, verification, the policy decision — knows or cares which provider it's talking to.
 
 **No LLM is ever in the path that moves money.** The classifier and extractor have zero tools. The policy engine that decides `auto_pay` / `needs_approval` / `quarantine` / `ignore` is plain deterministic code. The only thing that ever calls a payment provider is the executor, after the policy engine says so or a human clicks "Confirm & pay."
 
-Full pipeline detail, the data model, and the threat-model-to-control mapping live in [`docs/ARCHITECTURE_AND_PIPELINE_SPEC.md`](docs/ARCHITECTURE_AND_PIPELINE_SPEC.md). The original product spec is in [`docs/PRD_PERFLO_AP_AGENT_V0.md`](docs/PRD_PERFLO_AP_AGENT_V0.md).
+The current implementation diagram and component map live in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Full pipeline detail, the data model, and the threat-model-to-control mapping live in [`docs/ARCHITECTURE_AND_PIPELINE_SPEC.md`](docs/ARCHITECTURE_AND_PIPELINE_SPEC.md). The original product spec is in [`docs/PRD_PERFLO_AP_AGENT_V0.md`](docs/PRD_PERFLO_AP_AGENT_V0.md).
 
 ## Guardrails
 
