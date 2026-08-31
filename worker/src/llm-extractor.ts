@@ -106,6 +106,50 @@ function validMethod(value: unknown): value is PaymentMethod {
     && Object.keys(method).every((key) => ["kind", "accountNumber", "ifsc", "beneficiaryName"].includes(key));
 }
 
+function normalizeReference(value: string): string {
+  return value.trim().replace(/\s+/g, "").toUpperCase();
+}
+
+/**
+ * An LLM is useful for finding values in messy layouts, but its confidence is
+ * not evidence. When the deterministic parser independently finds the exact
+ * invoice reference in the email/PDF text, retain the LLM's richer extraction
+ * and promote that one field to the source-backed confidence. Conversely, a
+ * disagreement is never allowed to inherit the source parser's confidence.
+ */
+function corroborateReferenceWithSource(
+  extracted: ExtractionResult,
+  sourceExtraction: ExtractionResult,
+): ExtractionResult {
+  const sourceReference = sourceExtraction.referenceNumber;
+  if (!sourceReference) return extracted;
+
+  if (!extracted.referenceNumber) {
+    return {
+      ...extracted,
+      referenceNumber: sourceReference,
+      referenceNumberConfidence: sourceExtraction.referenceNumberConfidence,
+    };
+  }
+
+  if (normalizeReference(extracted.referenceNumber) === normalizeReference(sourceReference)) {
+    return {
+      ...extracted,
+      referenceNumberConfidence: Math.max(
+        extracted.referenceNumberConfidence,
+        sourceExtraction.referenceNumberConfidence,
+      ),
+    };
+  }
+
+  // Both parsers found a reference but disagree. Keep it visible for review,
+  // but make the disagreement ineligible for automatic payment.
+  return {
+    ...extracted,
+    referenceNumberConfidence: Math.min(extracted.referenceNumberConfidence, 0.5),
+  };
+}
+
 /** Validates the API response again; JSON-schema mode is helpful but not a trust boundary. */
 export function parseLLMExtractorOutput(raw: string): ExtractionResult | null {
   let parsed: unknown;
@@ -146,7 +190,7 @@ export async function extractPaymentDetailsWithLLM(
       new Promise<string>((_resolve, reject) => setTimeout(() => reject(new Error("LLM extraction timed out.")), timeoutMs)),
     ]);
     const parsed = parseLLMExtractorOutput(raw);
-    return parsed ?? fallback;
+    return parsed ? corroborateReferenceWithSource(parsed, fallback) : fallback;
   } catch {
     return fallback;
   }

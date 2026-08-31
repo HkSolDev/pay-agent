@@ -1,8 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { prisma } from "@perflo-ap-agent/db";
-import { attemptAutoPay } from "./auto-pay-gate.js";
+// Extensionless — this module is reachable from the Next.js app bundle (via
+// actions.ts -> resume-auto-pay.ts), which needs these without ".js"; see
+// the comment in reevaluate-policy.ts.
+import { attemptAutoPay } from "./auto-pay-gate";
 import type { PolicyDecision } from "./policy-engine.js";
-import { executePreparedPayment } from "./payment-execution.js";
+import { executePreparedPayment } from "./payment-execution";
 
 /**
  * Runs after Level 1 writes a `policyDecision` of "auto_pay" for an email
@@ -24,6 +27,7 @@ export async function runAutoPayIfEligible(input: {
   policyDecision: PolicyDecision;
   recipientNickname: string;
   amount: string;
+  currency: "INR" | "USD";
 }): Promise<void> {
   // executePreparedPayment always records the real outcome on the
   // PaymentIntent row itself (paid/failed/unknown_outcome), same as a
@@ -43,7 +47,7 @@ export async function runAutoPayIfEligible(input: {
           const idempotencyKey = randomBytes(16).toString("hex");
           await prisma.paymentIntent.upsert({
             where: { emailId },
-            create: { emailId, recipientNickname: input.recipientNickname, amount: input.amount, currency: "INR", idempotencyKey },
+            create: { emailId, recipientNickname: input.recipientNickname, amount: input.amount, currency: input.currency, idempotencyKey },
             update: {},
           });
           return { idempotencyKey };

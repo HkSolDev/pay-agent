@@ -55,7 +55,41 @@ describe("LLM payment-detail extractor", () => {
       ...payable,
       bodyText: "TAX INVOICE\nGrand total:\n₹15,000\nUPI: acme@okaxis\nInvoice number INV-42",
     }, { callLLM: async () => JSON.stringify(validOutput) });
-    expect(result).toEqual(validOutput);
+    expect(result).toEqual({ ...validOutput, referenceNumberConfidence: 1 });
+  });
+
+  it("promotes a low LLM reference score when the exact reference is independently found in source text", async () => {
+    const result = await extractPaymentDetailsWithLLM({
+      ...payable,
+      subject: "Invoice INV-9005",
+      bodyText: "Invoice Number: INV-9005\nTotal due: INR 500\nUPI: acme@okaxis",
+    }, {
+      callLLM: async () => JSON.stringify({
+        ...validOutput,
+        referenceNumber: "INV-9005",
+        referenceNumberConfidence: 0.85,
+      }),
+    });
+
+    expect(result.referenceNumber).toBe("INV-9005");
+    expect(result.referenceNumberConfidence).toBe(1);
+  });
+
+  it("does not promote a reference when the LLM and source text disagree", async () => {
+    const result = await extractPaymentDetailsWithLLM({
+      ...payable,
+      subject: "Invoice INV-9005",
+      bodyText: "Invoice Number: INV-9005\nTotal due: INR 500\nUPI: acme@okaxis",
+    }, {
+      callLLM: async () => JSON.stringify({
+        ...validOutput,
+        referenceNumber: "INV-9006",
+        referenceNumberConfidence: 0.99,
+      }),
+    });
+
+    expect(result.referenceNumber).toBe("INV-9006");
+    expect(result.referenceNumberConfidence).toBe(0.5);
   });
 
   it("does not call the LLM for classifier-flagged injection", async () => {

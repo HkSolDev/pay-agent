@@ -6,6 +6,9 @@ import { prisma, Prisma } from "@perflo-ap-agent/db";
 import { validatePaymentInput } from "../../worker/src/validate-payment-input";
 import { executePreparedPayment } from "../../worker/src/payment-execution";
 import { isSyncPaused, setSyncPaused } from "../../worker/src/sync-state";
+import { reviewRetryBlockReason } from "../../worker/src/review-retry";
+import { reevaluatePolicy } from "../../worker/src/reevaluate-policy";
+import { resumeAutoPayForEligibleInvoices } from "../../worker/src/resume-auto-pay";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -14,24 +17,32 @@ const execFileAsync = promisify(execFile);
 
 export async function preparePayment(formData: FormData) {
   const emailId = String(formData.get("emailId"));
-  const recipientNickname = String(formData.get("recipientNickname") ?? "").trim();
-  const amount = String(formData.get("amount") ?? "").trim();
-  const currency = String(formData.get("currency") ?? "INR");
-
-  // Checked here, before any row exists — catches "abc" or "-5" before they
-  // become an avoidable failed Perflo call and a confusing row in the queue.
-  const validation = validatePaymentInput(recipientNickname, amount);
-  if (!validation.ok) {
-    throw new Error(validation.error ?? "Invalid payment details.");
-  }
 
   // The form normally supplies an id from the queue, but server actions are
   // still HTTP entry points. Refuse a fabricated/stale id rather than create
   // an orphan payment intent that cannot be reviewed in the queue.
-  const email = await prisma.email.findUnique({ where: { id: emailId }, select: { id: true } });
-  if (!email) {
+  const email = await prisma.email.findUnique({
+    where: { id: emailId },
+    select: { id: true, resolvedPayeeId: true, extractionSummary: true },
+  });
+  if (!email?.resolvedPayeeId) {
     throw new Error("The email to pay no longer exists.");
   }
+  const payee = await prisma.payee.findUnique({ where: { id: email.resolvedPayeeId }, select: { recipientNickname: true } });
+  if (!payee) throw new Error("The resolved payee no longer exists.");
+
+  // Never trust editable browser fields for money movement. The invoice's
+  // resolved payee and extracted amount are the source of truth; this also
+  // prevents a display nickname such as `demo-test-auto` from bypassing the
+  // exact approved rail stored for the payee.
+  const summary = email.extractionSummary && typeof email.extractionSummary === "object" && !Array.isArray(email.extractionSummary)
+    ? email.extractionSummary as { amount?: { value?: unknown; currency?: unknown } | null }
+    : {};
+  const sourceAmount = summary.amount;
+  const amount = typeof sourceAmount?.value === "string" ? sourceAmount.value : "";
+  const currency = sourceAmount?.currency === "USD" ? "USD" : sourceAmount?.currency === "INR" ? "INR" : "";
+  const validation = validatePaymentInput(payee.recipientNickname, amount);
+  if (!validation.ok || !currency) throw new Error("The invoice does not contain a valid payable amount and currency.");
 
   // idempotencyKey is generated once here, at prepare time, and never
   // touched again on re-prepare — it identifies the logical payment, not
@@ -39,8 +50,8 @@ export async function preparePayment(formData: FormData) {
   const idempotencyKey = randomBytes(16).toString("hex");
   await prisma.paymentIntent.upsert({
     where: { emailId },
-    create: { emailId, recipientNickname, amount, currency, idempotencyKey },
-    update: { recipientNickname, amount, currency },
+    create: { emailId, recipientNickname: payee.recipientNickname, amount, currency, idempotencyKey },
+    update: { recipientNickname: payee.recipientNickname, amount, currency },
   });
   revalidatePath("/");
 }
@@ -54,6 +65,28 @@ export async function confirmPayment(emailId: string, _formData: FormData): Prom
   // failure was already recorded — the point of executePreparedPayment
   // writing the row is exactly so the queue's own "Failed" pill can show it
   // on the next render, not to also blow up the form submission.
+  // Repair intents prepared by older UI versions before retrying. The
+  // provider route must always use the currently resolved payee nickname and
+  // the invoice's persisted amount/currency, never a stale editable field.
+  const email = await prisma.email.findUnique({
+    where: { id: emailId },
+    select: { resolvedPayeeId: true, extractionSummary: true },
+  });
+  if (email?.resolvedPayeeId) {
+    const payee = await prisma.payee.findUnique({ where: { id: email.resolvedPayeeId }, select: { recipientNickname: true } });
+    const summary = email.extractionSummary && typeof email.extractionSummary === "object" && !Array.isArray(email.extractionSummary)
+      ? email.extractionSummary as { amount?: { value?: unknown; currency?: unknown } | null }
+      : {};
+    const sourceAmount = summary.amount;
+    const amount = typeof sourceAmount?.value === "string" ? sourceAmount.value : "";
+    const currency = sourceAmount?.currency === "USD" ? "USD" : sourceAmount?.currency === "INR" ? "INR" : "";
+    if (payee && currency && validatePaymentInput(payee.recipientNickname, amount).ok) {
+      await prisma.paymentIntent.update({
+        where: { emailId },
+        data: { recipientNickname: payee.recipientNickname, amount, currency },
+      });
+    }
+  }
   await executePreparedPayment(emailId);
   revalidatePath("/");
 }
@@ -84,6 +117,14 @@ export async function updateReviewAction(formData: FormData): Promise<void> {
 export async function retryReviewProcessing(formData: FormData): Promise<void> {
   const emailId = String(formData.get("emailId") ?? "").trim();
   if (!emailId) throw new Error("The email to retry is missing.");
+
+  const intent = await prisma.paymentIntent.findUnique({
+    where: { emailId },
+    select: { status: true },
+  });
+  const blockedReason = reviewRetryBlockReason(intent?.status ?? null);
+  if (blockedReason) throw new Error(blockedReason);
+
   await prisma.email.update({
     where: { id: emailId },
     data: {
@@ -100,6 +141,38 @@ export async function retryReviewProcessing(formData: FormData): Promise<void> {
       level1ProcessedAt: null,
     },
   });
+  // `ingest.ts` pulls in the Gmail/Composio SDK and cannot be bundled into a
+  // Next server action. Run the review-only worker entrypoint separately, as
+  // Sync now does; it disables auto-pay for this reprocessing path.
+  const repoRoot = path.resolve(process.cwd(), "..");
+  await execFileAsync("pnpm", ["exec", "tsx", "worker/src/retry-level1-cli.ts", emailId], {
+    cwd: repoRoot,
+    timeout: 30_000,
+  });
+  revalidatePath("/");
+}
+
+/**
+ * Recalculates an invoice's policy decision from what's already stored — no
+ * re-extraction, no re-classification, and no payment. Safe to run any time
+ * a runtime setting (AUTO_PAY_MODE, a payee's auto-pay toggle) may have
+ * changed since this invoice was last processed.
+ */
+export async function reevaluatePolicyAction(formData: FormData): Promise<void> {
+  const emailId = String(formData.get("emailId") ?? "").trim();
+  if (!emailId) throw new Error("The email to re-evaluate is missing.");
+  await reevaluatePolicy(emailId);
+  revalidatePath("/");
+}
+
+/**
+ * The one explicit action that can turn already-queued invoices into real
+ * payments after AUTO_PAY_MODE is switched on. Only invoices blocked solely
+ * by the global pause are touched; every other guardrail is re-checked live
+ * before anything pays. See worker/src/resume-auto-pay.ts.
+ */
+export async function resumeAutoPayAction(): Promise<void> {
+  await resumeAutoPayForEligibleInvoices();
   revalidatePath("/");
 }
 

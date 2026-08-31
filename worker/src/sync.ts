@@ -3,6 +3,10 @@ import { fetchNewGmailMessages, isGmailConnected } from "./gmail.js";
 import { ingestGmailMessages, processPendingLevel1 } from "./ingest.js";
 
 const CHECKPOINT_ID = 1;
+// Gmail search/indexing can lag behind the moment a message is sent. Re-scan
+// a short overlap on every poll so a message that appears late is not skipped
+// forever; ingest's gmailMessageId uniqueness makes the overlap idempotent.
+const CHECKPOINT_OVERLAP_SECONDS = 10 * 60;
 
 export interface SyncSummary {
   ran: boolean;
@@ -38,7 +42,7 @@ export async function syncOnce(): Promise<SyncSummary> {
   }
 
   const startedAt = Math.floor(Date.now() / 1000);
-  const sinceEpochSeconds = await loadCheckpoint();
+  const sinceEpochSeconds = Math.max(0, (await loadCheckpoint()) - CHECKPOINT_OVERLAP_SECONDS);
   const messages = await fetchNewGmailMessages(sinceEpochSeconds);
   const { inserted, skipped } = await ingestGmailMessages(messages);
   await processPendingLevel1();

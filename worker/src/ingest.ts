@@ -14,6 +14,7 @@ import type { PayableFingerprint } from "./duplicate-detector.js";
 import { loadApprovedPayees } from "./payee-store.js";
 import { loadPayeeUsage } from "./payment-usage.js";
 import { runAutoPayIfEligible } from "./auto-pay-runner.js";
+import { reviewRetryBlockReason } from "./review-retry.js";
 
 export const MAX_PDF_ATTACHMENTS_PER_EMAIL = 3;
 export const MAX_PDF_ATTACHMENT_BYTES = 10 * 1024 * 1024;
@@ -145,6 +146,7 @@ async function processEmailRow(
   approvedPayees: ApprovedPayee[],
   history: PayableFingerprint[],
   extract: (input: ExtractionInput) => Promise<ExtractionResult>,
+  options: { allowAutoPay?: boolean; markReprocessed?: boolean } = {},
 ): Promise<void> {
     const kind = row.classification ?? "unrelated";
     const result: Level1PipelineResult = await processLevel1({
@@ -177,15 +179,18 @@ async function processEmailRow(
         policyDecision: result.decision,
         policyReasons: result.reasons,
         level1ProcessedAt: new Date(),
+        reviewStatus: options.markReprocessed ? "reprocessed" : undefined,
+        reviewedAt: options.markReprocessed ? new Date() : undefined,
       },
     });
 
-    if (result.decision === "auto_pay" && result.resolution.status === "resolved" && result.extraction.amount) {
+    if (options.allowAutoPay !== false && result.decision === "auto_pay" && result.resolution.status === "resolved" && result.extraction.amount) {
       await runAutoPayIfEligible({
         emailId: row.id,
         policyDecision: result.decision,
         recipientNickname: result.resolution.recipientNickname,
         amount: result.extraction.amount.value,
+        currency: result.extraction.amount.currency,
       });
     }
 }
@@ -245,13 +250,25 @@ export async function processPendingLevel1(deps: IngestDeps = defaultDeps): Prom
 
 /** Re-run the review-only Level 1 stages for an existing email. */
 export async function retryLevel1Processing(emailId: string): Promise<void> {
+  const intent = await prisma.paymentIntent.findUnique({
+    where: { emailId },
+    select: { status: true },
+  });
+  const blockedReason = reviewRetryBlockReason(intent?.status ?? null);
+  if (blockedReason) throw new Error(blockedReason);
+
   const row = await prisma.email.findUniqueOrThrow({ where: { id: emailId }, select: processableEmailSelect });
   const approvedPayees = await loadApprovedPayees();
   const previousRows = await prisma.email.findMany({
     where: { level1ProcessedAt: { not: null } },
     select: { id: true, resolvedPayeeId: true, extractionSummary: true },
   });
-  await processEmailRow(row, approvedPayees, fingerprintsFromRows(previousRows), extractWithSelectedBackend);
+  // A user-initiated review retry refreshes evidence only. It must never turn
+  // a previously reviewed email into a new automatic payout.
+  await processEmailRow(row, approvedPayees, fingerprintsFromRows(previousRows), extractWithSelectedBackend, {
+    allowAutoPay: false,
+    markReprocessed: true,
+  });
 }
 
 function isPdfAttachment(attachment: ParsedAttachment): boolean {

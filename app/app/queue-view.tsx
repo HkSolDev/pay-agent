@@ -6,6 +6,7 @@ import type { PaymentIntentStatus } from "@perflo-ap-agent/db";
 import { PaymentCell } from "./payment-cell";
 import { ReviewDrawerLauncher } from "./review-drawer";
 import type { ReviewEmail, ReviewIntent } from "./review-drawer-model";
+import { GLOBAL_PAUSE_REASON } from "../../worker/src/policy-engine";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -15,6 +16,18 @@ function asRecord(value: unknown): JsonRecord {
 
 function asString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
+}
+
+// A payment attempt (auto-pay or manual) already started for this email —
+// "needs approval" is about whether an owner still has to make a decision
+// before any payment path begins, so once an intent exists past "pending"
+// (claimed while in flight, or a terminal paid/failed/unknown_outcome), this
+// is no longer an accurate label even though nothing else about the email's
+// classification/policy fields changed. The card's own PaymentCell already
+// shows the real status (Still processing / Paid / Failed / Retry); this
+// only stops the queue's summary tag from contradicting it.
+function hasPaymentAttempt(status: string | undefined): boolean {
+  return !!status && status !== "pending";
 }
 
 export interface SerializedIntent {
@@ -41,11 +54,22 @@ export type QueueTab = "needs_approval" | "paid" | "quarantine" | "all";
 export function QueueView({
   items,
   payeeStats,
+  autoPayModeOn = false,
+  reevaluatePolicyAction,
+  resumeAutoPayAction,
 }: {
   items: QueueItem[];
   payeeStats?: PayeeStats;
+  autoPayModeOn?: boolean;
+  reevaluatePolicyAction?: (formData: FormData) => void | Promise<void>;
+  resumeAutoPayAction?: () => void | Promise<void>;
 }) {
   const [activeTab, setActiveTab] = useState<QueueTab>("needs_approval");
+
+  const pausedOnlyCount = useMemo(
+    () => items.filter((item) => item.email.policyReasons?.length === 1 && item.email.policyReasons[0] === GLOBAL_PAUSE_REASON).length,
+    [items],
+  );
 
   const counts = useMemo(() => {
     let needsApproval = 0;
@@ -59,6 +83,7 @@ export function QueueView({
       const isNeedsApproval =
         !isPaid &&
         !isQuarantine &&
+        !hasPaymentAttempt(item.intent?.status) &&
         (item.email.policyDecision === "needs_approval" ||
           item.email.reviewStatus === "needs_approval" ||
           (item.email.classification !== "ignored" && item.email.policyDecision !== "ignore"));
@@ -78,6 +103,7 @@ export function QueueView({
       const isNeedsApproval =
         !isPaid &&
         !isQuarantine &&
+        !hasPaymentAttempt(item.intent?.status) &&
         (item.email.policyDecision === "needs_approval" ||
           item.email.reviewStatus === "needs_approval" ||
           (item.email.classification !== "ignored" && item.email.policyDecision !== "ignore"));
@@ -179,12 +205,24 @@ export function QueueView({
             {payeeStats?.approvedCount ?? 0} approved payees ({payeeStats?.activeRailCount ?? 0} active encrypted rails)
           </span>
         </div>
-        <Link href="/payees" className="btn btn-ghost" style={{ flexShrink: 0 }}>
-          + Add &amp; manage payees
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M5 12h14M13 6l6 6-6 6" />
-          </svg>
-        </Link>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexShrink: 0 }}>
+          <span className={`tag ${autoPayModeOn ? "tag-accent-2" : "tag-neutral"}`} title="Live AUTO_PAY_MODE state, read fresh on every page load — not stored per invoice.">
+            {autoPayModeOn ? "Auto-pay: live" : "Auto-pay: globally paused"}
+          </span>
+          {autoPayModeOn && pausedOnlyCount > 0 && resumeAutoPayAction && (
+            <form action={resumeAutoPayAction}>
+              <button type="submit" className="btn btn-secondary">
+                Resume auto-pay for {pausedOnlyCount} eligible invoice{pausedOnlyCount === 1 ? "" : "s"}
+              </button>
+            </form>
+          )}
+          <Link href="/payees" className="btn btn-ghost">
+            + Add &amp; manage payees
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg>
+          </Link>
+        </div>
       </div>
 
       {/* ── Filter Tabs ── */}
@@ -242,18 +280,28 @@ export function QueueView({
             const isQuarantine = email.policyDecision === "quarantine" || email.injectionDetected === true;
             const isNeedsApproval =
               !isQuarantine &&
+              !hasPaymentAttempt(intent?.status) &&
               (email.policyDecision === "needs_approval" ||
                 email.reviewStatus === "needs_approval" ||
                 (email.classification !== "ignored" && email.policyDecision !== "ignore"));
             const isIgnored = email.classification === "ignored" || email.policyDecision === "ignore";
             const isNeutral = !isQuarantine && !isNeedsApproval && !isIgnored;
 
-            const primaryWarning =
-              email.policyReasons && email.policyReasons.length > 0
-                ? email.policyReasons[0]
+            // Once a payment has actually landed (paid), the reasons above
+            // describe review-time state that's now moot — a human already
+            // overrode them by clicking "Confirm & pay," or auto-pay's own
+            // checks passed cleanly. Showing them here would read as active
+            // problems on a completed payment, which they no longer are.
+            const warnings =
+              intent?.status === "paid"
+                ? []
+                : email.policyReasons && email.policyReasons.length > 0
+                ? email.policyReasons
                 : email.injectionDetected
-                ? "Prompt injection detected"
-                : null;
+                ? ["Prompt injection detected"]
+                : [];
+            const blockedOnlyByPause =
+              intent?.status !== "paid" && email.policyReasons?.length === 1 && email.policyReasons[0] === GLOBAL_PAUSE_REASON;
 
             const reviewIntent: ReviewIntent | undefined = intent
               ? { status: intent.status, paidAt: intent.paidAt }
@@ -310,14 +358,36 @@ export function QueueView({
                     )}
                   </p>
 
-                  {/* Warning pill */}
-                  {primaryWarning && (
-                    <div className="queue-warning">
+                  {/* Warning pills — every blocking reason, not just the first.
+                      A card blocked only by the runtime pause switch gets a
+                      neutral (not alarm-colored) pill plus a way to refresh
+                      it, since that reason can go stale the moment
+                      AUTO_PAY_MODE changes — unlike every other reason here,
+                      which only changes on a full reprocess. */}
+                  {blockedOnlyByPause ? (
+                    <div className="queue-warning queue-warning-runtime">
                       <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M12 4l9 16H3z" /><path d="M12 10v4" /><circle cx="12" cy="17" r="0.6" fill="currentColor" />
+                        <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 3" />
                       </svg>
-                      {primaryWarning}
+                      {autoPayModeOn
+                        ? "Blocked by global pause when last processed — may now be eligible."
+                        : "Global pause is enabled."}
+                      {reevaluatePolicyAction && (
+                        <form action={reevaluatePolicyAction} style={{ display: "inline", marginLeft: "0.5rem" }}>
+                          <input type="hidden" name="emailId" value={email.id} />
+                          <button type="submit" className="btn btn-ghost btn-xs">Re-evaluate policy</button>
+                        </form>
+                      )}
                     </div>
+                  ) : (
+                    warnings.map((warning, index) => (
+                      <div className="queue-warning" key={`${email.id}-warning-${index}`}>
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 4l9 16H3z" /><path d="M12 10v4" /><circle cx="12" cy="17" r="0.6" fill="currentColor" />
+                        </svg>
+                        {warning}
+                      </div>
+                    ))
                   )}
                 </div>
 
