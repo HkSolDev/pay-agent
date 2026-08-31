@@ -269,7 +269,7 @@ export function QueueView({
                       <strong className="queue-sender">{email.fromName ?? email.fromAddr}</strong>
                       {reference && <span className="queue-ref">· {reference}</span>}
                       <time className="queue-date" dateTime={email.date}>
-                        · {new Date(email.date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                        · {new Date(email.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                       </time>
                     </div>
                     <div>
