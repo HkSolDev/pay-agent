@@ -7,6 +7,10 @@ import { PayeeForm } from "../payee-form";
 import { PayeeRailRow } from "../payee-rail-row";
 import { toggleAutoPayAction } from "../payee-actions";
 
+// Same reasoning as app/app/page.tsx: this page reads live DB state and
+// must never be statically prerendered at build time.
+export const dynamic = "force-dynamic";
+
 // Server component only: raw rail bytes are decrypted here, in trusted
 // server code, purely to compute a masked display string. The plaintext
 // value is never sent to the client — only maskRailValue's output is.
