@@ -81,6 +81,11 @@ model Email {
 model IngestCheckpoint {
   id                Int      @id @default(1)
   sinceEpochSeconds Int      @map("since_epoch_seconds")
+  // Owner-controlled kill switch for background Gmail polling (the "Paused"
+  // button) — the worker's poll loop checks this before every fetch. Lives
+  // on this single-row table rather than a new one since it's the same
+  // "where sync currently stands" concept the checkpoint already tracks.
+  paused            Boolean  @default(false)
   updatedAt         DateTime @updatedAt @map("updated_at")
 
   @@map("ingest_checkpoint")
@@ -162,6 +167,15 @@ model Payee {
   grantTotalCapInr      String?   @map("grant_total_cap_inr")
   grantMaxPayments      Int?      @map("grant_max_payments")
   grantExpiresAt        DateTime? @map("grant_expires_at")
+
+  // Per-payee opt-in for FR-18/FR-19's `auto_pay` decision to actually
+  // execute (see worker/src/auto-pay-gate.ts). Off by default: approving a
+  // payee only ever grants a rail to pay *through* (see payee-actions.ts),
+  // never a standing instruction to pay automatically — that's this
+  // separate, deliberate switch. Also gated globally by AUTO_PAY_MODE, so
+  // turning this on for one payee alone still does nothing unless the owner
+  // has also enabled auto-pay for the whole deployment.
+  autoPayEnabled Boolean @default(false) @map("auto_pay_enabled")
 
   createdAt  DateTime  @default(now()) @map("created_at")
   approvedAt DateTime? @map("approved_at")

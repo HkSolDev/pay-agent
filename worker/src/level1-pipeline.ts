@@ -5,6 +5,7 @@ import { findDuplicate, type DuplicateResult, type PayableFingerprint } from "./
 import { decidePolicy, type PolicyDecision } from "./policy-engine.js";
 import { resolvePayee, type ApprovedPayee, type ResolveResult } from "./payee-resolver.js";
 import { verifyEmail, type VerificationResult } from "./verifier.js";
+import { computeGrantStatus, amountWithinOwnerCeiling, type PayeeUsage } from "./auto-pay-eligibility.js";
 
 export interface Level1PipelineInput {
   emailId: string;
@@ -15,6 +16,12 @@ export interface Level1PipelineInput {
   links: Array<{ href: string; finalDomain: string; visibleText: string }>;
   approvedPayees: ApprovedPayee[];
   duplicateHistory: PayableFingerprint[];
+  // How much of the resolved payee's total-cap/max-payments grant is
+  // already used. Only called when a payee actually resolves — a DB read,
+  // injected the same way `extract` is, so this file stays testable without
+  // Postgres. Defaults to "nothing used yet" for callers (existing tests)
+  // that don't care about auto-pay at all.
+  loadPayeeUsage?: (recipientNickname: string) => Promise<PayeeUsage>;
 }
 
 export interface Level1PipelineResult {
@@ -107,6 +114,18 @@ export async function processLevel1(
   const duplicate: DuplicateResult = resolvedPayeeId && extraction.amount
     ? findDuplicate({ emailId: input.emailId, payeeId: resolvedPayeeId, referenceNumber: extraction.referenceNumber, referenceIsFallback, amount: extraction.amount }, input.duplicateHistory)
     : { duplicate: false };
+  // Only meaningful once a payee has actually resolved — everything else
+  // (new_payee, details_changed, etc.) already fails decidePolicy's
+  // resolution check on its own, so there's nothing to look up yet.
+  const resolvedPayee = resolvedPayeeId ? input.approvedPayees.find((p) => p.payeeId === resolvedPayeeId) : undefined;
+  const amountInr = extraction.amount ? Number(extraction.amount.value) : NaN;
+  const usage = resolvedPayee && Number.isFinite(amountInr)
+    ? await (input.loadPayeeUsage ?? (async () => ({ totalPaidInr: 0, paidCount: 0 })))(resolvedPayee.recipientNickname)
+    : { totalPaidInr: 0, paidCount: 0 };
+  const grant = resolvedPayee && Number.isFinite(amountInr)
+    ? computeGrantStatus(resolvedPayee.grant, amountInr, usage)
+    : { active: false, notExpired: false, perPaymentCapOk: false, remainingAmountOk: false, remainingCountOk: false };
+
   const decision = decidePolicy({
     classification: input.classification,
     extraction: {
@@ -123,11 +142,13 @@ export async function processLevel1(
     },
     verification,
     duplicate: duplicate.duplicate,
-    // Grant management and automatic execution are deliberately not wired
-    // during KYC pending/dry-run mode, so the policy cannot yield auto_pay.
-    grant: { active: false, notExpired: false, perPaymentCapOk: false, remainingAmountOk: false, remainingCountOk: false },
-    amountWithinOwnerCeiling: false,
-    paused: true,
+    grant,
+    amountWithinOwnerCeiling: Number.isFinite(amountInr) ? amountWithinOwnerCeiling(amountInr) : false,
+    // The global kill switch — unset/anything but "on" means every payment
+    // stays needs_approval no matter what else checks out, same as the
+    // hardcoded-true behavior this replaces.
+    paused: process.env.AUTO_PAY_MODE !== "on",
+    payeeAutoPayEnabled: resolvedPayee?.grant.autoPayEnabled ?? false,
   });
   return { extraction, resolution, verification, duplicate, decision: decision.decision, reasons: decision.reasons };
 }

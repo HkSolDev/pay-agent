@@ -3,12 +3,9 @@ import { prisma } from "@perflo-ap-agent/db";
 import { QueueView, type QueueItem } from "./queue-view";
 import type { ReviewEmail } from "./review-drawer-model";
 import { fetchRazorpayBalance } from "../../worker/src/razorpay-balance";
+import { isSyncPaused } from "../../worker/src/sync-state";
+import { syncNowAction, togglePauseAction } from "./actions";
 
-// A stuck payout's own error often just says "insufficient balance" — this
-// surfaces the actual number so the owner doesn't have to go check the
-// RazorpayX dashboard to find out why nothing is clearing. Read-only, and a
-// failed/misconfigured lookup must never break the rest of the queue page,
-// so any error here becomes "we don't know," not a page crash.
 async function loadRazorpayBalance() {
   const { RAZORPAY_KEY_ID: keyId, RAZORPAY_KEY_SECRET: keySecret, RAZORPAY_ACCOUNT_NUMBER: accountNumber } = process.env;
   if (!keyId || !keySecret || !accountNumber) return null;
@@ -20,12 +17,13 @@ async function loadRazorpayBalance() {
 }
 
 export default async function QueuePage() {
-  const [emails, intents, approvedPayeeCount, activeRailCount, razorpayBalance] = await Promise.all([
+  const [emails, intents, approvedPayeeCount, activeRailCount, razorpayBalance, syncPaused] = await Promise.all([
     prisma.email.findMany({ orderBy: { date: "desc" }, take: 50 }),
     prisma.paymentIntent.findMany(),
     prisma.payee.count({ where: { status: "approved" } }),
     prisma.payeePaymentMethod.count({ where: { status: "active" } }),
     loadRazorpayBalance(),
+    isSyncPaused(),
   ]);
   const intentByEmailId = new Map(intents.map((intent) => [intent.emailId, intent]));
 
@@ -79,38 +77,67 @@ export default async function QueuePage() {
 
   return (
     <main className="shell">
+      {/* Header */}
       <header className="topbar">
         <div>
-          <p className="eyebrow">PERFLO AP AGENT</p>
+          <p className="eyebrow">Perflo AP Agent</p>
           <h1>Payment queue</h1>
         </div>
-        <div className="actions">
-          <Link href="/payees" className="payees-action-link">
-            <span className="payees-icon">👥</span>
-            <span>Payees</span>
-            <span className="payees-count-pill">{approvedPayeeCount}</span>
+        <div className="topbar-actions">
+          {/* Payees link — secondary btn, with count tag */}
+          <Link href="/payees" className="btn btn-secondary" style={{ textDecoration: "none" }}>
+            {/* users icon */}
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="9" cy="8" r="3" />
+              <path d="M3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5" />
+              <path d="M16 8.2a3 3 0 010 5.8" />
+              <path d="M19.5 20c-.1-2.4-1.3-4.2-3-5.1" />
+            </svg>
+            Payees
+            <span className="tag tag-neutral">{approvedPayeeCount}</span>
           </Link>
-          <button type="button" disabled>
-            Sync now
-          </button>
-          <button type="button" className="pause" disabled>
-            Paused
-          </button>
+          <form action={syncNowAction}>
+            <button type="submit" className="btn btn-secondary" disabled={syncPaused}>
+              {/* refresh icon */}
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 4v5h5" /><path d="M20 20v-5h-5" />
+                <path d="M5 9a7 7 0 0112-3.5M19 15a7 7 0 01-12 3.5" />
+              </svg>
+              Sync now
+            </button>
+          </form>
+          <form action={togglePauseAction}>
+            <button type="submit" className="btn btn-paused">
+              {/* moon icon */}
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 14.5A8 8 0 119.5 4a6.5 6.5 0 0010.5 10.5z" />
+              </svg>
+              {syncPaused ? "Resume syncing" : "Pause syncing"}
+            </button>
+          </form>
         </div>
       </header>
 
+      {/* RazorpayX Balance Banner */}
       {razorpayBalance && (
-        <section
-          className={`notice ${razorpayBalance.availableAmountMinor <= 0 ? "notice-warn" : ""}`}
-          aria-label="RazorpayX account balance"
-        >
-          <strong>RazorpayX test balance</strong>
-          <span>
-            ₹{(razorpayBalance.availableAmountMinor / 100).toFixed(2)} available
-            {razorpayBalance.availableAmountMinor <= 0 &&
-              " — payouts will stay queued until this account has test funds. Add balance from the RazorpayX Test Mode dashboard."}
-          </span>
-        </section>
+        <div className="balance-banner" aria-label="RazorpayX account balance">
+          <div className="balance-banner-inner">
+            {/* credit-card icon in sage */}
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--color-accent-2-800)" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2" y="5" width="20" height="14" rx="3" />
+              <path d="M2 10h20" />
+            </svg>
+            <div>
+              <strong>RazorpayX test balance</strong>
+              <div>
+                <span>
+                  ₹{(razorpayBalance.availableAmountMinor / 100).toFixed(2)} available
+                  {razorpayBalance.availableAmountMinor <= 0 && " — add balance in RazorpayX Test Mode"}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       <QueueView

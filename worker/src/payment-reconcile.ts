@@ -1,9 +1,20 @@
 import { prisma } from "@perflo-ap-agent/db";
 import type { PaymentExecutor, PayoutResult } from "./payment-executor.js";
+import { createRazorpayExecutor } from "./payment-executor-razorpay.js";
 
 export interface ReconcileSummary {
   checked: number;
   updated: number;
+}
+
+// Shared by the background worker loop and the "Sync now" CLI (sync-once-cli.ts)
+// so both build the executor the same way — unset credentials simply means
+// there is nothing to reconcile against (the Perflo CLI path has no
+// status-polling command at all; see payment-executor-perflo.ts).
+export function razorpayExecutorFromEnv(): PaymentExecutor | null {
+  const { RAZORPAY_KEY_ID: keyId, RAZORPAY_KEY_SECRET: keySecret, RAZORPAY_ACCOUNT_NUMBER: accountNumber } = process.env;
+  if (!keyId || !keySecret || !accountNumber) return null;
+  return createRazorpayExecutor({ keyId, keySecret, accountNumber });
 }
 
 // Razorpay payout ids always look like "pout_...". Our own idempotency keys

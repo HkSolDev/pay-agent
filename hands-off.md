@@ -1,9 +1,9 @@
 # Perflo AP Agent — Hands-off Handoff
 
-Last verified: 2026-08-30 20:15 IST
-Branch: `codex/level1-edge-case-review` (fresh branch from merged `origin/main`)
-Base commit: `1e4dad4` (`Merge pull request #3 from HkSolDev/level1-classifier-llm`)
-Open PR: [HkSolDev/pay-agent#4](https://github.com/HkSolDev/pay-agent/pull/4) — "Add pluggable payment-executor with RazorpayX sandbox adapter", ready for review (not draft), everything below is pushed and committed, nothing uncommitted.
+Last verified: 2026-08-31
+Branch: `codex/level1-edge-case-review`
+Merged: PR #4 (pluggable payment-executor) and PR #5 (this branch's full edge-case + payment-reconciliation + dashboard-redesign history) are both merged into `main`.
+Open PR: [HkSolDev/pay-agent#6](https://github.com/HkSolDev/pay-agent/pull/6) — "Fix confirmPayment crashing the page on a recorded payment failure", ready for review (not draft). This is the *only* change on this branch not yet in `main`; everything else described below is already merged.
 
 ## Read this first (new chat window / new AI session)
 
@@ -12,8 +12,31 @@ Before touching this repo, read in this order:
 1. This file (`hands-off.md`) in full — it is the authoritative "what actually happened and why," not just a task list.
 2. `README.md` and `tests/README.md` — current commands, test count, and the parallel-test-key-collision note (see "Known flakiness" below — don't mistake it for a real regression).
 3. `packages/db/prisma/schema.prisma` — the real persistence boundaries; trust this over any prose description of a model shape.
-4. `worker/src/payment-executor.ts` — the new provider-neutral payment interface (this session's main addition); read its file-header comment on the RBI/PPI/escrow boundary before proposing anything involving holding funds.
+4. `worker/src/payment-executor.ts` and `worker/src/payment-reconcile.ts` — the provider-neutral payment interface and the reconciliation poller (this session's main addition); read the former's file-header comment on the RBI/PPI/escrow boundary before proposing anything involving holding funds.
 5. **Do not trust any of the above blindly** — this handoff was itself corrected mid-session after a "confirmed bug" turned out to be stale/corrupted local Postgres state, not a real code defect (see "A verification lesson from this session" below). Re-run `pnpm test` and the demo reseed commands yourself before accepting any claim here as still true.
+6. **There is currently no login/auth of any kind on the Next.js app.** Anyone with the deployed URL can view every invoice and click "Confirm & pay," which makes a real (sandbox) RazorpayX API call. If this gets deployed publicly (Railway, etc.), password-protect it at the host level before sharing the link — this is not yet fixed in code.
+
+## Session summary — 2026-08-31, PR #5 (merged) + PR #6 (open)
+
+This session picked up right after PR #4 merged, and did five things, in order:
+
+**1. Closed the "payment stuck forever" gap identified at session start.** `getPayoutStatus()` existed on the `PaymentExecutor` interface but nothing ever called it, and the RazorpayX adapter discarded its own payout reference on every outcome except success — so a payment that landed at `unknown_outcome` had no id to ever look up again, and a clean pre-payout error (e.g. a bad IFSC on a payee's saved bank details) was misclassified as `unknown_outcome` (never-auto-retry) instead of `failed` (safe to retry). Three fixes, in `worker/src/payment-executor-razorpay.ts`, `payment-executor.ts`, `payment-executor-adapter.ts`, and `app/app/actions.ts`:
+   - Set `reference_id` on payout creation (RazorpayX's own field for finding a payout later by a value we already have) and thread `providerReference` through `PaymentDefiniteFailure`/`PaymentUnknownOutcomeError` so it gets persisted on **every** outcome, not just success.
+   - Split the RazorpayX call into a Contact→FundAccount stage and a separate Payout stage: any failure in the first, or a *definite* rejection response in the second, is now `failed` (retriable); only a genuine network failure with no response on the payout call itself stays `unknown_outcome`.
+   - Added `worker/src/payment-reconcile.ts` — `reconcileStuckPayments()`, wired into the existing `pollOnce()` loop in `worker/src/index.ts` (runs every `POLL_INTERVAL_SECONDS`, alongside Gmail ingest). Finds any `unknown_outcome` row with a real provider reference, asks RazorpayX what actually happened via `getPayoutStatus()`, and resolves it to `paid`/`failed`. Never creates a new payout — read-only, FR-27-safe. Deliberately does **not** cover a `claimed` row with no reference at all (the process crashed before `createPayout` ever returned) — that needs a lookup-by-`reference_id` capability `getPayoutStatus` doesn't have; documented as a known gap in `payment-reconcile.ts`'s own header comment, not built.
+   - All verified against the real local Postgres **and** a live RazorpayX test-mode sandbox, not just mocks: a bad-IFSC payment now lands at `failed` with a working Retry button (previously stuck at `unknown_outcome` forever); a genuinely in-flight payout's real reference is now saved and re-checked automatically by the background worker.
+
+**2. Fixed two real bugs found only by driving the actual browser, not by reading code.**
+   - A hydration mismatch on the queue's date column (`toLocaleDateString(undefined, ...)` — server and browser locale differ) that was silently swallowing button clicks (Confirm & pay, Retry) until the page was manually reloaded. Fixed by pinning an explicit locale.
+   - `confirmPayment` recorded a failure to the `PaymentIntent` row correctly, then re-threw the same error anyway — and since the payment `<form>` has no client-side error handling, this crashed the whole page with Next.js's raw dev/runtime error overlay instead of showing the queue's own "Failed" pill (reproduced live: a nickname with no approved payee rail). Fixed by only logging server-side the one case that has nothing recorded to show (the row was never actually claimed).
+
+**3. Added a RazorpayX account-balance display** (`worker/src/razorpay-balance.ts`, wired into `app/app/page.tsx`) — a stuck payout's own error is often just "insufficient balance" with no number attached, so the owner had to go check the RazorpayX dashboard separately. Fetches `/v1/banking_balances` (confirmed against RazorpayX's docs — **not** `/v1/balance`) for the configured account, shown above the queue, flagged amber at/below zero. Read-only; degrades to showing nothing on any error.
+
+**4. Removed the "Level 1 — review-only" banner from the UI** at the user's request, and confirmed the LLM classification/extraction path (`CLASSIFIER_MODE=llm`/`EXTRACTOR_MODE=llm`) actually works end-to-end against real OpenAI calls, not just the rule-based fallback — verified live by inserting one fresh dummy invoice through the exact same code path the real worker uses and confirming `extractionBackend: "llm"` with a real, high-confidence result.
+
+**5. The queue UI itself was redesigned by a separate session mid-branch** (KPI-style status counts, filter tabs, two-step Prepare→Confirm cards instead of one flat 50-row table) — `app/app/page.tsx`, `app/app/queue-view.tsx`, `app/app/payment-cell.tsx`, `app/app/globals.css`. This session built on top of it (the balance display and banner removal above) rather than redoing it; see "Files changed this session" below for the exact file list.
+
+**Deployment guidance given, not yet acted on**: Railway (or Render) recommended over Vercel-only (the background worker is a persistent `setInterval` process — Vercel functions can't run that) and over Cloudflare Workers (would need rewriting the worker into stateless scheduled invocations, plus unverified Prisma/OpenAI-SDK compatibility with Cloudflare's runtime — real rework, not a deploy option). Gmail auth for a deployed worker needs no new setup: Composio owns the OAuth session server-side, keyed by `COMPOSIO_API_KEY` — the same key on the deployed worker sees the same already-connected inbox.
 
 ## Session summary — 2026-08-30, PR #4
 
@@ -41,33 +64,39 @@ Partway through the edge-case pass, Docker's Postgres container crashed independ
 
 ## Next steps (in order)
 
-1. **Manual smoke test against a real RazorpayX test-mode account** — this session verified the adapter against docs and mocked `fetch`, but never against a live sandbox (no test keys are present in this repo, and none should be pasted into chat). Get RazorpayX test-mode keys + the test-mode customer identifier (`RAZORPAY_ACCOUNT_NUMBER`), seed a demo `needs_approval` invoice, click "Confirm pay," and confirm the full Contact → Fund Account → Payout sequence actually completes against Razorpay's sandbox, landing in `PaymentIntent.status = paid`.
-2. **Branch decision, still open from before this session**: `codex/level1-edge-case-review` is a fresh branch off merged `main`, so the original "level1-classifier-llm no longer matches its contents" naming problem is resolved by branching fresh — but decide whether PR #4 should merge before or after item 1's live smoke test.
-3. **Dedicated Gmail test mailbox for real ingestion validation** — still not done as of this handoff; the live `pnpm worker` process observed mid-session was already pointed at one (confirmed by the user), but that setup itself isn't documented anywhere in this repo yet. Document it once confirmed stable.
-4. **Only after Perflo KYC clears**: connect Perflo for real, verify identity, reconcile one small manual payment — unchanged from before, still fully blocked externally.
+1. **Merge PR #6**, or address review feedback on it — it's the only unmerged change on this branch (see header).
+2. **No login/auth on the app** (see item 6 above) — needs a fix (host-level password gate is the fastest option) before any public/founder-facing deploy link goes out.
+3. **Independent review of the payment-reconciliation work** (item 1 in this session's summary) — everything was self-reviewed and live-tested this session, but per `.claude/skills/payment-review`'s own rule, self-review has a structural blind spot; a separate pass should read the actual diff before this is trusted long-term.
+4. **RazorpayX Test Mode balance**: confirmed live this session that the account balance can be healthy while a specific already-queued payout still reports "insufficient balance" from before the top-up — looks like a RazorpayX sandbox quirk (queued payouts may need a manual retry from their dashboard, not just a balance top-up). Not something fixable from this codebase; worth confirming directly with Razorpay if it recurs.
+5. **Deploy to Railway** (guidance given this session, not yet executed) — web + worker + Postgres as three services from this repo; set `RAZORPAY_*` (test keys only), `COMPOSIO_API_KEY`, `OPENAI_API_KEY`, `PAYEE_ENCRYPTION_KEY`/`PAYEE_HASH_KEY`, `DATABASE_URL` on the host.
+6. **Payment-completion notification** — currently the owner/founder has to reload the page and look; there's no push notification (email/Slack/toast) when a payment clears. Discussed, not built; ask before starting since it's a new feature, not a bug fix.
+7. **Fix `demo-inbox.ts`'s seed deps to force deterministic extraction, not just classification** — see "Current outcome" below for the exact failure this causes today (`demo-scenarios.integration.test.ts` times out) whenever `EXTRACTOR_MODE=llm` is set in `.env`. Small, isolated fix; not done yet because it was only just discovered while updating this doc.
+8. **Dedicated Gmail test mailbox for real ingestion validation** — still not done as of this handoff; the live `pnpm worker` process observed in an earlier session was already pointed at one (confirmed by the user), but that setup itself isn't documented anywhere in this repo yet. Document it once confirmed stable.
+9. **Only after Perflo KYC clears**: connect Perflo for real, verify identity, reconcile one small manual payment — unchanged from before, still fully blocked externally.
 
 ## What should be reviewed later
 
 - The `payViaConfiguredExecutor` destination-resolution logic in `app/app/actions.ts` (matches by `recipientNickname` string, not a real FK — inherits the pre-existing `PaymentIntent`↔`Payee` gap documented earlier in this file under "Two relationships are deliberately not real foreign keys"). If that gap ever gets closed, this lookup should be revisited too.
 - Whether `PaymentIntent`'s schema should grow a `processing` status to match the new `PaymentExecutor` interface's status vocabulary — currently `processing` collapses to `unknown_outcome` in `payoutResultToLegacyPayResult` (see that file's comment) because the existing schema has no representation for "in flight."
 - A Stripe adapter, if USD/international payouts become a real requirement — deliberately not started; RazorpayX's payout model doesn't generalize to it, per the second AI's review captured in this session (see PR #4's description).
-- Webhook-based reconciliation for RazorpayX payouts (currently poll-only via `getPayoutStatus`) — same "fast-follow, not designed out" status as it was for Perflo's own reconciliation gap noted below.
+- **Webhook-based reconciliation for RazorpayX payouts** — deliberately deferred until this app is deployed with a public URL (RazorpayX needs somewhere to send the webhook). Polling (`payment-reconcile.ts`, see this session's summary above) is the reliability backstop in the meantime and stays useful even once a webhook exists — RazorpayX itself only retries failed webhook delivery for 24h before disabling it, so poll-as-backstop is the standard shape here, not a stopgap to delete later.
+- **Reconciling a `claimed` row with no saved reference at all** (the process crashed before `createPayout` ever returned a result) — `payment-reconcile.ts` explicitly does not cover this; would need a lookup-by-`reference_id` capability added to `getPayoutStatus`'s contract. Not built because it hasn't actually been observed, only reasoned about.
+- **No login/auth on the Next.js app at all** — see item 6 in "Read this first" above. Whoever deploys this needs to either add real auth or rely on host-level URL protection; do not treat "no one else has the link yet" as a substitute.
 
 ## Current outcome
 
-Level 0 is complete and Level 1 is implemented in **review-only/dry-run mode**. The Payees management screen (server actions, rail lifecycle, masking, demo seed) is now also implemented. The project has been independently checked against the current code, PRD, architecture spec, and Yeshu interview notes.
+Level 0 is complete and Level 1 is implemented in **review-only/dry-run mode** — the UI no longer displays a "Level 1 — review-only" banner (removed this session per the user's request), but the underlying behavior is unchanged: every payment still requires an explicit Prepare → Confirm & pay click, nothing is automatic. The Payees management screen (server actions, rail lifecycle, masking, demo seed) is implemented. The RazorpayX payment path now has real reconciliation (see this session's summary above) instead of a payment being able to get stuck at `unknown_outcome` forever. The project has been independently checked against the current code, PRD, architecture spec, and Yeshu interview notes as of the 2026-08-30 session; this session's own reconciliation/UI work has been self-reviewed and live-tested but not yet independently reviewed by a separate pass (see "Next steps").
 
-The latest successful verification ran against local Postgres:
+The latest successful verification ran against local Postgres, this session:
 
-- `pnpm test`: **227/227 passing** across 36 test files
+- `pnpm test`: **267/267 passing** across 43 test files, with `CLASSIFIER_MODE`/`EXTRACTOR_MODE` unset (up from 227/227 across 36 files last session — new coverage for the RazorpayX error-classification fix, `payment-executor-adapter`'s reference threading, `payment-reconcile.ts`, and `razorpay-balance.ts`). **Real gotcha found while verifying this**: with `EXTRACTOR_MODE=llm` set in `.env` (as it was for parts of this session), `demo-scenarios.integration.test.ts`'s unfiltered `seedDemoInbox()` call makes 23 real OpenAI extraction calls (`demo-inbox.ts`'s seed deps hardcode the classifier to deterministic but never overrode the extractor) and reliably times out against vitest's default 5s limit. Not a regression in anything built this session — a pre-existing gap in the demo harness's isolation from env-configured LLM mode, newly triggered now that LLM mode actually gets used. Worth fixing (make the demo seed's extraction deterministic too, matching its own classification), not yet done.
 - `pnpm typecheck`: clean
-- `pnpm --dir app build`: successful (Turbopack production build), `/payees` route registered alongside `/`
-- Prisma: **10 migrations applied; database up to date** — new migration `20260830064402_payee_grant_and_rail_lifecycle` adds grant caps/expiry/status to `Payee` and status/created/replaced/revoked timestamps to `PayeePaymentMethod`
-- Manually smoke-tested in a real browser: add-payee inline validation (rejects `billing@gmail.com` as a UPI VPA), successful payee creation with masked rail display, and a real revoke action that flips a rail to `revoked` and hides its action buttons
+- Manually verified live against a real RazorpayX test-mode sandbox (not just mocks): a bad-IFSC payout now lands at `failed` with a working Retry button; a genuinely in-flight payout's real reference is saved and the background worker's reconciliation loop re-checks it automatically every poll cycle; a nickname with no approved payee now shows a clean inline "Failed" pill instead of crashing the page
 - No automatic payment is enabled; `AUTO_PAY_MODE`/`auto_pay` remain a policy label only
-- No successful real payment has been proven because Perflo KYC is still pending
+- No successful real payment has fully cleared yet in the RazorpayX sandbox — every attempt this session landed at `processing`/`unknown_outcome` for reasons on RazorpayX's own side (insufficient test balance, or a queued payout not re-checking itself after a later top-up), not a bug in this codebase; confirmed by calling RazorpayX's API directly outside of this app's own code
+- Real Perflo payment is still blocked on KYC, unchanged from before
 
-KYC is an external dependency, not a reason to stop development. Continue building and demonstrating the review flow without connecting the Perflo agent screen or moving real money.
+KYC is an external dependency, not a reason to stop development. Continue building and demonstrating the review flow without connecting the Perflo agent screen or moving real money through Perflo (RazorpayX test-mode is not real money and is fine to keep exercising).
 
 ## Conversation and project-state summary
 
@@ -224,6 +253,13 @@ In plain terms: the Payees screen, the encrypted rail storage, and the whole rev
 - Real (Postgres-backed) `ApprovePayeeDeps` implementation — the first one; previously only test mocks existed. Perflo recipient/grant creation stays a local placeholder pending KYC.
 - Local demo payees (`worker/src/demo-payees.ts`) pairing with the existing demo inbox (`worker/src/demo-inbox.ts`), covering all 9 requested scenarios: normal UPI, bank/NEFT, multiple rails, changed UPI, changed bank account, unknown sender, conflicting sender/rail, revoked rail, and duplicate invoice.
 - Small commits cover validation, LLM extraction, encrypted payee loading, pipeline persistence, queue UI, the review drawer, and payee management.
+- RazorpayX payout reference capture on every outcome (paid/failed/unknown), not just success — see this session's summary.
+- Correct `failed` vs. `unknown_outcome` classification for RazorpayX payouts: a definite pre-payout or provider-rejected error is `failed` (retriable); only a genuine network failure with no response stays `unknown_outcome`.
+- Automated reconciliation poller (`payment-reconcile.ts`) running inside the existing worker loop — resolves any `unknown_outcome` payment with a real reference once RazorpayX confirms paid/failed, with no manual action needed.
+- RazorpayX account-balance display on the queue dashboard, flagged when at/below zero.
+- Redesigned queue dashboard: KPI-style status counts, filter tabs (needs approval / paid / quarantine / all), two-step Prepare→Confirm payment cards replacing the old flat 50-row table.
+- `confirmPayment` no longer crashes the page on a recorded payment failure (e.g. an unmatched payee nickname) — shows the same inline "Failed... Retry" pill as any other failure instead.
+- Confirmed live that `CLASSIFIER_MODE=llm`/`EXTRACTOR_MODE=llm` genuinely calls OpenAI (not just the rule-based fallback), and that both the classifier and extractor already fall back to the deterministic path automatically on any LLM failure — this was already the design, not something added this session.
 
 ## Exact next task
 
@@ -269,6 +305,20 @@ Two Turbopack-specific fixes worth knowing about if this bites again: `import ty
 - `worker/src/ingest-pdf.test.ts` — extracted/failed PDF status assertions.
 - `worker/src/payee-approval.test.ts` — payee UPI/bank approval contract tests.
 - `README.md` and `tests/README.md` — current commands, status, test count, and next work.
+
+## Files changed and review map (Payment reconciliation + dashboard redesign)
+
+- `worker/src/payment-executor-razorpay.ts` and `.test.ts` — split `createPayout` into a Contact→FundAccount stage and a Payout stage with separate error handling (see this session's summary above for why); added `reference_id: request.idempotencyKey` on the payout body; added a `RazorpayHttpError` class to distinguish "RazorpayX answered with a rejection" from "no response at all" (only the latter is genuinely `unknown`).
+- `worker/src/payment-executor.ts` — `PaymentDefiniteFailure`/`PaymentUnknownOutcomeError` now carry an optional `providerReference` through their constructor.
+- `worker/src/payment-executor-adapter.ts` and `.test.ts` — `payoutResultToLegacyPayResult` now passes `result.providerReference` into both thrown error classes instead of discarding it.
+- `app/app/actions.ts` — `confirmPayment`'s catch block now persists `providerReference` on failure/unknown-outcome (previously only on success), and no longer re-throws once the failure has been recorded (see this session's summary, item 2).
+- `worker/src/payment-reconcile.ts` and `.test.ts` (new) — `reconcileStuckPayments()`, the polling backstop; see this session's summary above for exactly what it does and does not cover.
+- `worker/src/index.ts` — constructs a RazorpayX executor from the same env vars `actions.ts` checks, and calls `reconcileStuckPayments()` once per poll cycle, independently of the Gmail-ingest step.
+- `worker/src/razorpay-balance.ts` and `.test.ts` (new) — `fetchRazorpayBalance()`, reads `/v1/banking_balances` (confirmed against RazorpayX's real docs, not assumed) and filters to the configured account.
+- `app/app/page.tsx` — fetches the balance (guarded: any error or missing config just shows nothing, never breaks the page) and renders it above the queue; the old "Level 1 — review-only" `<section>` was removed here.
+- `app/app/queue-view.tsx` — fixed the hydration bug (`toLocaleDateString(undefined, ...)` → explicit `"en-US"` locale on the queue date column).
+- `app/app/globals.css` — added `.notice-warn`, an amber variant of the existing `.notice` style, reused for the low-balance state.
+- `app/app/page.tsx`, `app/app/queue-view.tsx`, `app/app/payment-cell.tsx`, `app/app/globals.css` — the dashboard redesign itself (KPI-style status counts, filter tabs defaulting to "needs approval", two-step Prepare→Confirm cards) was built by a **separate session** mid-branch, not this one; this session built on top of it rather than redoing it. `app/app/queue-view.tsx` is the new client component that replaced the old flat table.
 
 More information is in `.env.example` for safe local configuration, `packages/db/prisma/schema.prisma` for persistence boundaries, `worker/src/payee-approval.ts` for owner approval semantics, `worker/src/payment-method-validation.ts` for rail validation, and the test files beside each worker module. The README references `docs/PRD_PERFLO_AP_AGENT_V0.md`, but that path is not present in the current repository file listing; treat this handoff and the executable tests as the current implementation record until the PRD is restored.
 

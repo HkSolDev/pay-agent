@@ -55,8 +55,7 @@ export function QueueView({
 
     for (const item of items) {
       const isPaid = item.intent?.status === "paid";
-      const isQuarantine =
-        item.email.policyDecision === "quarantine" || item.email.injectionDetected === true;
+      const isQuarantine = item.email.policyDecision === "quarantine" || item.email.injectionDetected === true;
       const isNeedsApproval =
         !isPaid &&
         !isQuarantine &&
@@ -64,31 +63,18 @@ export function QueueView({
           item.email.reviewStatus === "needs_approval" ||
           (item.email.classification !== "ignored" && item.email.policyDecision !== "ignore"));
 
-      if (isPaid) {
-        paid++;
-      } else if (isQuarantine) {
-        quarantine++;
-      } else if (isNeedsApproval) {
-        needsApproval++;
-      } else {
-        other++;
-      }
+      if (isPaid) paid++;
+      else if (isQuarantine) quarantine++;
+      else if (isNeedsApproval) needsApproval++;
+      else other++;
     }
-
-    return {
-      needsApproval,
-      paid,
-      quarantine,
-      other,
-      total: items.length,
-    };
+    return { needsApproval, paid, quarantine, other, total: items.length };
   }, [items]);
 
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
       const isPaid = item.intent?.status === "paid";
-      const isQuarantine =
-        item.email.policyDecision === "quarantine" || item.email.injectionDetected === true;
+      const isQuarantine = item.email.policyDecision === "quarantine" || item.email.injectionDetected === true;
       const isNeedsApproval =
         !isPaid &&
         !isQuarantine &&
@@ -97,116 +83,147 @@ export function QueueView({
           (item.email.classification !== "ignored" && item.email.policyDecision !== "ignore"));
 
       switch (activeTab) {
-        case "needs_approval":
-          return isNeedsApproval;
-        case "paid":
-          return isPaid;
-        case "quarantine":
-          return isQuarantine;
-        case "all":
-          return true;
+        case "needs_approval": return isNeedsApproval;
+        case "paid": return isPaid;
+        case "quarantine": return isQuarantine;
+        case "all": return true;
       }
     });
   }, [items, activeTab]);
 
   return (
-    <div className="queue-container">
-      {/* 4 Top-Level KPI Summary Blocks */}
-      <section className="kpi-grid" aria-label="Queue summary metrics">
+    <div>
+      {/* ── 4 KPI Summary Cards ── */}
+      <section
+        aria-label="Queue summary metrics"
+        className="kpi-grid"
+      >
+        {/* Needs Approval */}
         <button
           type="button"
-          className={`kpi-card kpi-warning ${activeTab === "needs_approval" ? "kpi-active" : ""}`}
+          className={`kpi-card${activeTab === "needs_approval" ? " active-needs" : ""}`}
           onClick={() => setActiveTab("needs_approval")}
         >
-          <span className="kpi-label">🟡 Needs Approval</span>
-          <strong className="kpi-value">{counts.needsApproval}</strong>
-          <span className="kpi-subtext">Awaiting owner action</span>
+          <span className="kpi-card-label label-needs">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 3" />
+            </svg>
+            Needs approval
+          </span>
+          <strong className="kpi-card-number">{counts.needsApproval}</strong>
+          <span className="kpi-card-sub">Awaiting owner action</span>
         </button>
 
+        {/* Paid */}
         <button
           type="button"
-          className={`kpi-card kpi-success ${activeTab === "paid" ? "kpi-active" : ""}`}
+          className={`kpi-card${activeTab === "paid" ? " active-paid" : ""}`}
           onClick={() => setActiveTab("paid")}
         >
-          <span className="kpi-label">🟢 Paid / Settled</span>
-          <strong className="kpi-value">{counts.paid}</strong>
-          <span className="kpi-subtext">Completed payouts</span>
+          <span className="kpi-card-label label-paid">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="9" /><path d="M8.5 12.5l2.5 2.5 5-5" />
+            </svg>
+            Paid / settled
+          </span>
+          <strong className="kpi-card-number">{counts.paid}</strong>
+          <span className="kpi-card-sub">Completed payouts</span>
         </button>
 
+        {/* Quarantine */}
         <button
           type="button"
-          className={`kpi-card kpi-danger ${activeTab === "quarantine" ? "kpi-active" : ""}`}
+          className={`kpi-card${activeTab === "quarantine" ? " active-quarantine" : ""}`}
           onClick={() => setActiveTab("quarantine")}
         >
-          <span className="kpi-label">🛡️ Quarantined</span>
-          <strong className="kpi-value">{counts.quarantine}</strong>
-          <span className="kpi-subtext">Attacks &amp; hard flags</span>
+          <span className="kpi-card-label label-quarantine">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z" />
+              <path d="M12 8v4" /><circle cx="12" cy="15.5" r="0.6" fill="currentColor" />
+            </svg>
+            Quarantined
+          </span>
+          <strong className="kpi-card-number">{counts.quarantine}</strong>
+          <span className="kpi-card-sub">Attacks &amp; hard flags</span>
         </button>
 
+        {/* All */}
         <button
           type="button"
-          className={`kpi-card kpi-neutral ${activeTab === "all" ? "kpi-active" : ""}`}
+          className={`kpi-card${activeTab === "all" ? " active-all" : ""}`}
           onClick={() => setActiveTab("all")}
         >
-          <span className="kpi-label">⚪ Other / All</span>
-          <strong className="kpi-value">{counts.total}</strong>
-          <span className="kpi-subtext">Newsletters &amp; receipts ({counts.other})</span>
+          <span className="kpi-card-label label-all">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M12 3v3M12 18v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M3 12h3M18 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" />
+            </svg>
+            Other / all
+          </span>
+          <strong className="kpi-card-number">{counts.total}</strong>
+          <span className="kpi-card-sub">{counts.other} newsletters &amp; receipts</span>
         </button>
       </section>
 
-      {/* Payee Registry Summary Strip */}
+      {/* ── Payee Registry Banner ── */}
       <div className="payee-registry-banner" aria-label="Approved payees status">
         <div className="payee-registry-info">
-          <span className="payee-registry-icon">👥</span>
-          <div>
-            <strong>Payee Registry:</strong>{" "}
-            <span>
-              {payeeStats?.approvedCount ?? 0} approved payees ({payeeStats?.activeRailCount ?? 0} active encrypted rails)
-            </span>
-          </div>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--color-accent-700)" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <circle cx="9" cy="8" r="3" />
+            <path d="M3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5" />
+            <path d="M16 8.2a3 3 0 010 5.8" />
+            <path d="M19.5 20c-.1-2.4-1.3-4.2-3-5.1" />
+          </svg>
+          <span>
+            <strong>Payee registry:</strong>{" "}
+            {payeeStats?.approvedCount ?? 0} approved payees ({payeeStats?.activeRailCount ?? 0} active encrypted rails)
+          </span>
         </div>
-        <Link href="/payees" className="payee-registry-link">
-          + Add &amp; Manage Payees →
+        <Link href="/payees" className="btn btn-ghost" style={{ flexShrink: 0 }}>
+          + Add &amp; manage payees
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 12h14M13 6l6 6-6 6" />
+          </svg>
         </Link>
       </div>
 
-      {/* Filter Tabs */}
+      {/* ── Filter Tabs ── */}
       <nav className="tab-bar" aria-label="Queue filter tabs">
         <button
           type="button"
-          className={`tab-button ${activeTab === "needs_approval" ? "tab-active" : ""}`}
+          className={`tab-btn${activeTab === "needs_approval" ? " tab-active" : ""}`}
           onClick={() => setActiveTab("needs_approval")}
         >
           Needs approval <span className="tab-count">{counts.needsApproval}</span>
         </button>
         <button
           type="button"
-          className={`tab-button ${activeTab === "paid" ? "tab-active" : ""}`}
+          className={`tab-btn${activeTab === "paid" ? " tab-active" : ""}`}
           onClick={() => setActiveTab("paid")}
         >
           Paid <span className="tab-count">{counts.paid}</span>
         </button>
         <button
           type="button"
-          className={`tab-button ${activeTab === "quarantine" ? "tab-active" : ""}`}
+          className={`tab-btn${activeTab === "quarantine" ? " tab-active" : ""}`}
           onClick={() => setActiveTab("quarantine")}
         >
           Quarantine <span className="tab-count">{counts.quarantine}</span>
         </button>
         <button
           type="button"
-          className={`tab-button ${activeTab === "all" ? "tab-active" : ""}`}
+          className={`tab-btn${activeTab === "all" ? " tab-active" : ""}`}
           onClick={() => setActiveTab("all")}
         >
           All activity <span className="tab-count">{counts.total}</span>
         </button>
       </nav>
 
-      {/* Queue Items List / Cards */}
+      {/* ── Queue Items List ── */}
       <div className="queue-list" role="feed" aria-label="Filtered queue rows">
         {filteredItems.length === 0 ? (
-          <div className="empty-card">
-            <p>No items in <strong>{activeTab.replace("_", " ")}</strong>.</p>
+          <div className="queue-empty-card">
+            No items in this filter.
           </div>
         ) : (
           filteredItems.map((item) => {
@@ -222,15 +239,14 @@ export function QueueView({
               : [];
             const railDisplay = paymentKinds.length > 0 ? paymentKinds.join(", ").toUpperCase() : "NO RAIL";
 
-            const isQuarantine =
-              email.policyDecision === "quarantine" || email.injectionDetected === true;
-            const policyBadgeClass = isQuarantine
-              ? "badge-quarantine"
-              : email.policyDecision === "needs_approval" || email.reviewStatus === "needs_approval"
-              ? "badge-needs-approval"
-              : email.classification === "ignored" || email.policyDecision === "ignore"
-              ? "badge-ignored"
-              : "badge-neutral";
+            const isQuarantine = email.policyDecision === "quarantine" || email.injectionDetected === true;
+            const isNeedsApproval =
+              !isQuarantine &&
+              (email.policyDecision === "needs_approval" ||
+                email.reviewStatus === "needs_approval" ||
+                (email.classification !== "ignored" && email.policyDecision !== "ignore"));
+            const isIgnored = email.classification === "ignored" || email.policyDecision === "ignore";
+            const isNeutral = !isQuarantine && !isNeedsApproval && !isIgnored;
 
             const primaryWarning =
               email.policyReasons && email.policyReasons.length > 0
@@ -240,81 +256,85 @@ export function QueueView({
                 : null;
 
             const reviewIntent: ReviewIntent | undefined = intent
-              ? {
-                  status: intent.status,
-                  paidAt: intent.paidAt,
-                }
+              ? { status: intent.status, paidAt: intent.paidAt }
               : undefined;
 
             return (
               <article key={email.id} className="queue-card">
+                {/* Left: content */}
                 <div className="queue-card-main">
-                  {/* Top line: Payee/Sender + Ref + Badges */}
+                  {/* Top row: sender + ref + date + state tag */}
                   <div className="queue-card-header">
                     <div className="queue-card-meta">
                       <strong className="queue-sender">{email.fromName ?? email.fromAddr}</strong>
                       {reference && <span className="queue-ref">· {reference}</span>}
                       <time className="queue-date" dateTime={email.date}>
-                        {/* Explicit locale, not `undefined` — `undefined` uses
-                            the runtime's default locale, which differs
-                            between the server (Node's locale) and the
-                            browser (the visitor's locale), producing two
-                            different strings for the same date and a
-                            hydration mismatch. */}
                         · {new Date(email.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                       </time>
                     </div>
-                    <div className="badge-group">
-                      <span className={`badge ${policyBadgeClass}`}>
-                        {email.reviewStatus ?? email.policyDecision ?? email.classification ?? "queued"}
-                      </span>
+                    <div>
+                      {isQuarantine && (
+                        <span className="tag tag-dark">quarantine</span>
+                      )}
+                      {isNeedsApproval && !isQuarantine && (
+                        <span className="tag tag-accent">needs approval</span>
+                      )}
+                      {isIgnored && (
+                        <span className="tag tag-neutral">ignored</span>
+                      )}
+                      {isNeutral && intent?.status === "paid" && (
+                        <span className="tag tag-accent-2">approved</span>
+                      )}
                     </div>
                   </div>
 
-                  {/* Financial line: Big Amount + Destination Payee & Rail */}
+                  {/* Amount → payee → rail */}
                   <div className="queue-financials">
-                    <div className="amount-block">
-                      <strong className="amount-display">
-                        {amountValue ? `${amountCurrency === "INR" ? "₹" : "$"}${amountValue}` : "No amount"}
-                      </strong>
-                      <span className="destination-arrow">→</span>
-                      <span className="payee-destination">
-                        {payeeName} <span className="rail-chip">{railDisplay}</span>
-                      </span>
-                    </div>
+                    <strong className="amount-display">
+                      {amountValue
+                        ? `${amountCurrency === "INR" ? "₹" : "$"}${amountValue}`
+                        : "No amount"}
+                    </strong>
+                    <span className="destination-arrow">→</span>
+                    <span className="payee-destination">
+                      {payeeName}
+                      <span className="tag tag-outline">{railDisplay}</span>
+                    </span>
                   </div>
 
-                  {/* Subject & snippet */}
+                  {/* Subject + snippet */}
                   <p className="queue-subject">
                     <strong>{email.subject ?? "(no subject)"}</strong>
                     {email.bodyText && (
-                      <span className="queue-snippet"> — {email.bodyText.slice(0, 100)}...</span>
+                      <span className="queue-snippet"> — {email.bodyText.slice(0, 100)}…</span>
                     )}
                   </p>
 
-                  {/* Policy warning indicator */}
+                  {/* Warning pill */}
                   {primaryWarning && (
                     <div className="queue-warning">
-                      <span className="warning-icon">⚠</span>
-                      <span>{primaryWarning}</span>
+                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 4l9 16H3z" /><path d="M12 10v4" /><circle cx="12" cy="17" r="0.6" fill="currentColor" />
+                      </svg>
+                      {primaryWarning}
                     </div>
                   )}
                 </div>
 
-                {/* Right / Bottom Action Controls */}
+                {/* Right: action column (190px desktop, full-width mobile) */}
                 <div className="queue-card-actions">
-                  <div className="drawer-launcher-wrap">
-                    <ReviewDrawerLauncher email={email} intent={reviewIntent} />
-                  </div>
-                  <div className="payment-cell-wrap">
-                    <PaymentCell
-                      emailId={email.id}
-                      classification={email.classification}
-                      defaultNickname={asString(extraction.payeeName) ? `demo-${asString(extraction.payeeName)!.toLowerCase().replace(/\s+/g, "-")}` : undefined}
-                      defaultAmount={amountValue ?? undefined}
-                      intent={intent}
-                    />
-                  </div>
+                  <ReviewDrawerLauncher email={email} intent={reviewIntent} />
+                  <PaymentCell
+                    emailId={email.id}
+                    classification={email.classification}
+                    defaultNickname={
+                      asString(extraction.payeeName)
+                        ? `demo-${asString(extraction.payeeName)!.toLowerCase().replace(/\s+/g, "-")}`
+                        : undefined
+                    }
+                    defaultAmount={amountValue ?? undefined}
+                    intent={intent}
+                  />
                 </div>
               </article>
             );

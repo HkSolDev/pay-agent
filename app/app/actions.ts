@@ -3,17 +3,14 @@
 import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { prisma, Prisma } from "@perflo-ap-agent/db";
-import { requestManualPayment } from "../../worker/src/manual-pay";
-import { payViaPerfloCli } from "../../worker/src/perflo-cli";
-import { claimPaymentIntent } from "../../worker/src/payment-claim";
 import { validatePaymentInput } from "../../worker/src/validate-payment-input";
-import { createPerfloExecutor } from "../../worker/src/payment-executor-perflo";
-import { createRazorpayExecutor } from "../../worker/src/payment-executor-razorpay";
-import { payoutResultToLegacyPayResult } from "../../worker/src/payment-executor-adapter";
-import { decimalStringToMinorUnits } from "../../worker/src/payment-amount";
-import { loadApprovedPayees } from "../../worker/src/payee-store";
-import { PaymentDefiniteFailure, PaymentUnknownOutcomeError } from "../../worker/src/payment-executor";
-import { paymentMethodToPayoutDestination } from "../../worker/src/payment-executor-destination";
+import { executePreparedPayment } from "../../worker/src/payment-execution";
+import { isSyncPaused, setSyncPaused } from "../../worker/src/sync-state";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import path from "node:path";
+
+const execFileAsync = promisify(execFile);
 
 export async function preparePayment(formData: FormData) {
   const emailId = String(formData.get("emailId"));
@@ -51,121 +48,14 @@ export async function preparePayment(formData: FormData) {
 // Return type must be void|Promise<void> — that's the contract a <form
 // action> requires; the page re-reads state from the DB on the next render
 // anyway (revalidatePath), so there's nothing useful to hand back here.
-// RazorpayX (sandbox/test-mode only) is used only when its test keys are
-// configured; unset leaves Perflo as the default so existing behavior for
-// anyone not opting in is unchanged. Both are just implementations of the
-// same PaymentExecutor interface — see worker/src/payment-executor.ts.
-async function payViaConfiguredExecutor(args: {
-  nickname: string;
-  amount: string;
-  currency: "INR" | "USD";
-  idempotencyKey: string;
-}): Promise<{ paymentReference: string }> {
-  const razorpayKeyId = process.env.RAZORPAY_KEY_ID;
-  const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET;
-  // The RazorpayX business/customer-identifier account being debited — a
-  // required field on the real Payouts API (`account_number`), distinct
-  // from the recipient's own bank/UPI details. See payment-executor-razorpay.ts.
-  const razorpayAccountNumber = process.env.RAZORPAY_ACCOUNT_NUMBER;
-
-  if (razorpayKeyId && razorpayKeySecret && razorpayAccountNumber) {
-    const approvedPayees = await loadApprovedPayees();
-    const payee = approvedPayees.find((p) => p.recipientNickname === args.nickname);
-    if (!payee) {
-      // Nothing has been sent to Razorpay yet — safe to mark failed (not
-      // unknown) and let the owner retry once the payee record is fixed.
-      throw new Error(`No approved payee rail found for recipient "${args.nickname}" — cannot route to RazorpayX.`);
-    }
-    const { destination, rail } = paymentMethodToPayoutDestination(payee.paymentMethod);
-    const executor = createRazorpayExecutor({ keyId: razorpayKeyId, keySecret: razorpayKeySecret, accountNumber: razorpayAccountNumber });
-    const result = await executor.createPayout({
-      recipientName: payee.recipientNickname,
-      currency: args.currency,
-      rail,
-      destination,
-      amountMinor: decimalStringToMinorUnits(args.amount),
-      idempotencyKey: args.idempotencyKey,
-    });
-    return payoutResultToLegacyPayResult(result);
-  }
-
-  const executor = createPerfloExecutor({ recipientNickname: args.nickname, payViaPerfloCli });
-  const result = await executor.createPayout({
-    recipientName: args.nickname,
-    currency: args.currency,
-    rail: "upi", // unused by the Perflo adapter — it addresses recipients by nickname, not rail.
-    destination: { kind: "upi", vpa: "" },
-    amountMinor: decimalStringToMinorUnits(args.amount),
-    idempotencyKey: args.idempotencyKey,
-  });
-  return payoutResultToLegacyPayResult(result);
-}
-
-// Return type must be void|Promise<void> — that's the contract a <form
-// action> requires; the page re-reads state from the DB on the next render
-// anyway (revalidatePath), so there's nothing useful to hand back here.
 export async function confirmPayment(emailId: string, _formData: FormData): Promise<void> {
-  try {
-    const result = await requestManualPayment(
-      { emailId, confirmedByOwner: true },
-      {
-        loadPayableEmail: async (id) => {
-          const intent = await prisma.paymentIntent.findUniqueOrThrow({ where: { emailId: id } });
-          return {
-            emailId: id,
-            recipientNickname: intent.recipientNickname,
-            amount: intent.amount,
-            currency: intent.currency,
-          };
-        },
-        claimPayment: claimPaymentIntent,
-        payRecipient: async ({ nickname, amount, currency, idempotencyKey }) =>
-          payViaConfiguredExecutor({ nickname, amount, currency: currency === "USD" ? "USD" : "INR", idempotencyKey }),
-      },
-    );
-
-    await prisma.paymentIntent.update({
-      where: { emailId },
-      data: { status: "paid", paidAt: new Date(), paymentReference: result.paymentReference, lastError: null },
-    });
-
-    revalidatePath("/");
-  } catch (err) {
-    // FR-27: a timeout or unparseable result is NOT the same as a definite
-    // "nothing happened" — the payment may already have landed at the
-    // provider before we lost the ability to confirm it. That case goes to
-    // unknown_outcome and is never offered a retry button; only a clean,
-    // provider-reported failure (or anything else clearly pre-payment like
-    // a missing recipient/amount) is safe to mark "failed".
-    const status = err instanceof PaymentUnknownOutcomeError ? "unknown_outcome" : "failed";
-    // Store the real reason — "Not connected. Run `perflo login` first." is
-    // very different from "outside grant," and the owner should see which
-    // one happened, not a generic "Failed" for both (PRD FR-27 treats
-    // NOT_CONNECTED/NO_SESSION/SIGNER_REVOKED as needing a clear alert).
-    const lastError = err instanceof Error ? err.message : String(err);
-    // Carry the provider's own reference through even on failure/unknown —
-    // previously this was dropped entirely, so a payout stuck at
-    // unknown_outcome had no way to later look up what actually happened to
-    // it at the provider (see payment-executor.ts's error classes).
-    const providerReference =
-      err instanceof PaymentUnknownOutcomeError || err instanceof PaymentDefiniteFailure ? err.providerReference : undefined;
-    const updated = await prisma.paymentIntent.updateMany({
-      where: { emailId, status: "claimed" },
-      data: { status, lastError, ...(providerReference ? { paymentReference: providerReference } : {}) },
-    });
-    // Re-throwing here used to crash the whole page with Next.js's raw
-    // error overlay (e.g. a nickname with no approved payee rail) even
-    // though the failure was already recorded above — the point of writing
-    // it to the row is exactly so the queue's own "Failed" pill can show it
-    // on the next render, not to also blow up the form submission. The one
-    // case nothing was recorded for (this row was never actually claimed —
-    // e.g. a concurrent claim) has nothing useful to show inline, so it's
-    // logged server-side instead of surfaced as a client-facing crash.
-    if (updated.count === 0) {
-      console.error(`confirmPayment: could not record failure for email ${emailId} (row not in "claimed" state):`, err);
-    }
-    revalidatePath("/");
-  }
+  // Re-throwing here used to crash the whole page with Next.js's raw error
+  // overlay (e.g. a nickname with no approved payee rail) even though the
+  // failure was already recorded — the point of executePreparedPayment
+  // writing the row is exactly so the queue's own "Failed" pill can show it
+  // on the next render, not to also blow up the form submission.
+  await executePreparedPayment(emailId);
+  revalidatePath("/");
 }
 
 const REVIEW_ACTIONS = {
@@ -210,5 +100,26 @@ export async function retryReviewProcessing(formData: FormData): Promise<void> {
       level1ProcessedAt: null,
     },
   });
+  revalidatePath("/");
+}
+
+export async function syncNowAction() {
+  // Runs in a separate process, not imported in-process — see sync-once-cli.ts
+  // for why (the Composio Gmail SDK it pulls in breaks the app's bundler).
+  const repoRoot = path.resolve(process.cwd(), "..");
+  try {
+    await execFileAsync("pnpm", ["exec", "tsx", "worker/src/sync-once-cli.ts"], {
+      cwd: repoRoot,
+      timeout: 30_000,
+    });
+  } catch (err) {
+    console.error("[sync-now] failed:", err instanceof Error ? err.message : err);
+  }
+  revalidatePath("/");
+}
+
+export async function togglePauseAction() {
+  const paused = await isSyncPaused();
+  await setSyncPaused(!paused);
   revalidatePath("/");
 }

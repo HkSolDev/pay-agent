@@ -1,0 +1,9 @@
+I'm giving you a design handoff for the Perflo AP Agent UI. Please implement it in this codebase (Next.js app under app/app/*: page.tsx, payees/page.tsx, queue-view.tsx, review-drawer.tsx, payee-form.tsx, payee-rail-row.tsx, payment-cell.tsx).
+
+Read design_handoff_ap_agent_ui/README.md first — it describes every screen, state, interaction, and design token.
+
+For the actual visual design (colors, typography, spacing, icons, exact markup/styles), the source of truth is design_handoff_ap_agent_ui/Perflo AP Agent.dc.html — open/view-source it directly. Design tokens (color ramps, fonts, radii, shadows) are defined in design_handoff_ap_agent_ui/_ds/organic-*/styles.css.
+
+Reference screenshots for each screen/state are in design_handoff_ap_agent_ui/screenshots/.
+
+This HTML file is a design reference, not code to copy in directly — recreate it using this codebase's existing React/Next.js patterns and styling approach (match whatever CSS approach the app already uses; if none exists yet, introduce the Organic tokens from styles.css as CSS variables). Please implement pixel-close to the HTML mockup: same layout, spacing, colors, icons, copy, and the row-level payment status state machine (idle → preparing → ready → processing → paid, with failed/unknown_outcome branches) described in the README.

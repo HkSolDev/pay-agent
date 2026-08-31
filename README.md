@@ -4,14 +4,18 @@ Accounts-payable review agent: Gmail/Composio intake, MIME/PDF parsing, safe cla
 
 ## Current status
 
-Level 0 and the Level 1 review-only pipeline are complete. The Queue row review drawer is implemented, including safe email/PDF display, field confidence, verifier evidence, duplicate information, policy reasons, timeline, and owner review actions. A Payees management screen is also implemented: add/replace/revoke payees and rails through protected server actions, with masked display and encrypted storage. Perflo KYC is still pending, so no successful real payment or connected-account verification has been proven, and payee approval creates only a local placeholder recipient/grant (no real Perflo call yet).
+Level 0 and the Level 1 review-only pipeline are complete. The Queue row review drawer is implemented, including safe email/PDF display, field confidence, verifier evidence, duplicate information, policy reasons, timeline, and owner review actions. A Payees management screen is also implemented: add/replace/revoke payees and rails through protected server actions, with masked display and encrypted storage.
 
-Last successful verification on 2026-08-30:
+Payment execution is pluggable — Perflo (KYC still pending, so not live yet) or RazorpayX test-mode (working today; a real payment payout attempt, sandbox money only). RazorpayX payouts that don't resolve immediately are automatically reconciled: a background poller checks any stuck payment against RazorpayX's own API every poll cycle and resolves it to paid/failed with no manual action needed. The dashboard also shows the RazorpayX test-mode account balance directly, since a stuck payout's own error is often just "insufficient balance" with no number attached.
 
-- `pnpm test` — 227/227 passing across 36 test files
+**There is no login/authentication of any kind on the app yet.** Before deploying this anywhere with a public URL, either add real auth or protect the URL at the host level (Railway/Render both support this) — anyone with the link can currently view every invoice and trigger a real (sandbox) payout.
+
+Last successful verification on 2026-08-31:
+
+- `pnpm test` — 267/267 passing across 43 test files (with `CLASSIFIER_MODE`/`EXTRACTOR_MODE` unset — see `tests/README.md` for a real gotcha if you have `EXTRACTOR_MODE=llm` set locally)
 - `pnpm typecheck` — clean
-- `pnpm --dir app build` — successful, `/payees` route registered
-- Prisma — 10 migrations applied and up to date
+- Live-verified against a real RazorpayX test-mode sandbox (not just mocked tests): a payout with a bad IFSC now correctly lands as `failed` with a working Retry button; a genuinely in-flight payout's reference is saved and automatically re-checked by the background worker.
+- Perflo KYC is still pending, so no successful real Perflo payment or connected-account verification has been proven, and payee approval still creates only a local placeholder recipient/grant (no real Perflo call yet).
 
 Automatic payment remains disabled. Review actions only update review state or queue another review-only processing pass. Payee actions only ever create/edit a `Payee`/`PayeePaymentMethod` row — never a `PaymentIntent`.
 
@@ -68,14 +72,17 @@ Keep API keys only in the local environment. Never commit `.env` or paste keys i
 ```text
 Gmail → ingest → junk filter → classify → extract → resolve payee
       → verify → duplicate check → policy → Queue review
-      → manual Perflo payment
+      → manual payment (Perflo or RazorpayX test-mode)
+      → automatic reconciliation poll (RazorpayX only, for now)
 ```
 
-The LLM has no tools or payment permission. Payment decisions are deterministic code, and automatic payment remains disabled while the review flow is being demonstrated.
+The LLM has no tools or payment permission. Payment decisions are deterministic code, and automatic payment remains disabled while the review flow is being demonstrated — a human always clicks Prepare, then Confirm & pay, separately.
+
+Set `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET`/`RAZORPAY_ACCOUNT_NUMBER` (test-mode only) to route payments through RazorpayX instead of Perflo; unset, the Perflo path stays the default.
 
 ## Next work
 
-The local seeded demo/test inbox, Payees management UI, and full edge-case review pass are complete. The next milestone is a dedicated Gmail test mailbox for real ingestion validation. Only after Perflo KYC clears should Perflo actually be connected and one small manual payment reconciled.
+The local seeded demo/test inbox, Payees management UI, full edge-case review pass, and RazorpayX payment reconciliation are complete. Immediate next steps: add auth or a host-level password gate before any public deploy, get an independent review of the reconciliation work, and deploy to Railway (the background worker needs a persistent host — Vercel-only or Cloudflare Workers won't run it as-is). Longer-term: a dedicated Gmail test mailbox for real ingestion validation, a payment-completion notification (none exists yet — the owner has to reload the page to see a status change), and a RazorpayX webhook once there's a public URL to point it at (polling reconciliation stays as the reliability backstop even after that). Only after Perflo KYC clears should Perflo actually be connected and one small manual payment reconciled.
 
 See [`hands-off.md`](hands-off.md) for the complete architecture, current-state summary, changed-file review list, and KYC-gated work.
 

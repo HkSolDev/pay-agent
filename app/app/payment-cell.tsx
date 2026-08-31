@@ -28,11 +28,16 @@ export function PaymentCell({
 }) {
   const [isPreparing, setIsPreparing] = useState(false);
 
+  // ignored → Not payable tag
   if (classification === "ignored") {
-    return <span className="payment-badge badge-ignored">Not payable</span>;
+    return (
+      <span className="tag tag-neutral payment-badge-not-payable">
+        Not payable
+      </span>
+    );
   }
 
-  // Step 1: No intent prepared yet -> Two-step safety gate (Prepare first)
+  // ── Step 1: No intent yet → Two-step gate ──
   if (!intent) {
     if (!isPreparing) {
       return (
@@ -41,7 +46,11 @@ export function PaymentCell({
           className="prepare-trigger-button"
           onClick={() => setIsPreparing(true)}
         >
-          Prepare payment ▾
+          Prepare payment
+          {/* chevron-down icon */}
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M6 9l6 6 6-6" />
+          </svg>
         </button>
       );
     }
@@ -91,16 +100,14 @@ export function PaymentCell({
     );
   }
 
-  // Step 2: Lifecycle states switch
+  // ── Step 2: Lifecycle states switch ──
   switch (intent.status) {
     case "pending":
       return (
         <div className="confirm-card-compact">
-          <div className="confirm-meta">
-            <span className="confirm-ready-tag">Ready to pay</span>
-            <strong className="confirm-amount">₹{intent.amount}</strong>
-            <span className="confirm-to">→ {intent.recipientNickname}</span>
-          </div>
+          <span className="confirm-ready-tag">Ready to pay</span>
+          <strong className="confirm-amount">₹{intent.amount}</strong>
+          <span className="confirm-to">→ {intent.recipientNickname}</span>
           <form action={confirmPayment.bind(null, emailId)}>
             <button type="submit" className="button-confirm-pay">
               Confirm &amp; pay
@@ -112,7 +119,7 @@ export function PaymentCell({
     case "claimed":
       return (
         <div className="payment-status-pill pill-processing">
-          <span className="status-indicator-dot dot-processing"></span>
+          <span className="dot-processing" />
           <span>Processing…</span>
         </div>
       );
@@ -120,8 +127,11 @@ export function PaymentCell({
     case "paid":
       return (
         <div className="payment-status-pill pill-paid">
-          <span className="status-indicator-dot dot-paid"></span>
-          <span>Paid ✓ {intent.paymentReference ? `· ${intent.paymentReference}` : ""}</span>
+          {/* check-circle icon */}
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="9" /><path d="M8.5 12.5l2.5 2.5 5-5" />
+          </svg>
+          <span>Paid · {intent.paymentReference ?? ""}</span>
         </div>
       );
 
@@ -129,7 +139,7 @@ export function PaymentCell({
       return (
         <div className="payment-failed-wrap">
           <div className="payment-status-pill pill-failed">
-            <span className="status-indicator-dot dot-failed"></span>
+            <span className="dot-failed" />
             <span>Failed {intent.lastError ? `(${intent.lastError})` : ""}</span>
           </div>
           <form action={confirmPayment.bind(null, emailId)}>
@@ -140,13 +150,41 @@ export function PaymentCell({
         </div>
       );
 
-    case "unknown_outcome":
+    case "unknown_outcome": {
+      // RazorpayX itself hasn't said pass or fail yet — "processing"/"queued"
+      // means it's still genuinely working on it (in live mode this resolves
+      // on its own; RazorpayX's test mode requires a manual dashboard step
+      // to advance it, so it can sit here indefinitely — see their Test Mode
+      // docs). That's expected, not a fault, so it gets calmer copy than an
+      // actual API error would. Either way we still never show "Paid" until
+      // RazorpayX itself confirms it (FR-27) — this only changes the words,
+      // never the claimed outcome.
+      const stillInFlight = /processing|queued/i.test(intent.lastError ?? "");
       return (
-        <div className="payment-status-pill pill-uncertain" title="FR-27: never automatically retried">
-          <span className="status-indicator-dot dot-uncertain"></span>
-          <span>⚠ Uncertain — check dashboard before retrying</span>
+        <div
+          className={`payment-status-pill ${stillInFlight ? "pill-inflight" : "pill-uncertain"}`}
+          title="FR-27: never automatically retried — RazorpayX hasn't confirmed the outcome yet"
+        >
+          {stillInFlight ? (
+            <>
+              {/* clock icon */}
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" />
+              </svg>
+              <span>Still processing at RazorpayX — no action needed yet</span>
+            </>
+          ) : (
+            <>
+              {/* alert-triangle icon */}
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 4l9 16H3z" /><path d="M12 10v4" /><circle cx="12" cy="17" r="0.6" fill="currentColor" />
+              </svg>
+              <span>Uncertain — check before retrying</span>
+            </>
+          )}
         </div>
       );
+    }
 
     default:
       return assertUnreachableStatus(intent.status);

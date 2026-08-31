@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { prisma } from "@perflo-ap-agent/db";
 import { approvePayee } from "../../worker/src/payee-approval";
 import { realApprovePayeeDeps } from "../../worker/src/payee-approval-deps";
 import { replacePaymentRail, revokePaymentRail } from "../../worker/src/payee-rail-lifecycle";
@@ -77,5 +78,16 @@ export async function revokeRailAction(formData: FormData): Promise<void> {
   const result = await revokePaymentRail({ methodId, ownerConfirmed });
   if (result.status === "confirmation_required") throw new Error("Confirm the revoke before submitting.");
   if (result.status === "not_found") throw new Error("The payment rail was not found.");
+  revalidatePath("/payees");
+}
+
+// The other half of the auto-pay gate alongside AUTO_PAY_MODE (the global
+// deployment-wide switch) — this is the per-payee opt-in. Off by default;
+// approving a payee never turns this on by itself (see schema.prisma).
+export async function toggleAutoPayAction(formData: FormData): Promise<void> {
+  const payeeId = String(formData.get("payeeId") ?? "").trim();
+  if (!payeeId) throw new Error("Missing payee id.");
+  const payee = await prisma.payee.findUniqueOrThrow({ where: { id: payeeId }, select: { autoPayEnabled: true } });
+  await prisma.payee.update({ where: { id: payeeId }, data: { autoPayEnabled: !payee.autoPayEnabled } });
   revalidatePath("/payees");
 }

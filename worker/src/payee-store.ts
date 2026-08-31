@@ -38,6 +38,14 @@ export async function loadApprovedPayees(): Promise<ApprovedPayee[]> {
         senderAddr: identity.senderAddr,
         recipientNickname: identity.payee.recipientNickname,
         paymentMethod,
+        grant: {
+          autoPayEnabled: identity.payee.autoPayEnabled,
+          payeeStatus: identity.payee.status,
+          perPaymentCapInr: identity.payee.grantPerPaymentCapInr,
+          totalCapInr: identity.payee.grantTotalCapInr,
+          maxPayments: identity.payee.grantMaxPayments,
+          expiresAt: identity.payee.grantExpiresAt?.toISOString() ?? null,
+        },
       });
     }
   }
