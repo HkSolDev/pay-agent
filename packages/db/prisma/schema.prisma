@@ -168,6 +168,15 @@ model Payee {
   grantMaxPayments      Int?      @map("grant_max_payments")
   grantExpiresAt        DateTime? @map("grant_expires_at")
 
+  // Per-payee opt-in for FR-18/FR-19's `auto_pay` decision to actually
+  // execute (see worker/src/auto-pay-gate.ts). Off by default: approving a
+  // payee only ever grants a rail to pay *through* (see payee-actions.ts),
+  // never a standing instruction to pay automatically — that's this
+  // separate, deliberate switch. Also gated globally by AUTO_PAY_MODE, so
+  // turning this on for one payee alone still does nothing unless the owner
+  // has also enabled auto-pay for the whole deployment.
+  autoPayEnabled Boolean @default(false) @map("auto_pay_enabled")
+
   createdAt  DateTime  @default(now()) @map("created_at")
   approvedAt DateTime? @map("approved_at")
   revokedAt  DateTime? @map("revoked_at")

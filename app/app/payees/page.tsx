@@ -5,6 +5,7 @@ import { paymentMethodFromNormalized } from "../../../worker/src/payee-store";
 import { maskRailValue } from "../payee-form-model";
 import { PayeeForm } from "../payee-form";
 import { PayeeRailRow } from "../payee-rail-row";
+import { toggleAutoPayAction } from "../payee-actions";
 
 // Server component only: raw rail bytes are decrypted here, in trusted
 // server code, purely to compute a masked display string. The plaintext
@@ -101,6 +102,24 @@ export default async function PayeesPage() {
                 {/* Sender identities */}
                 <div className="payee-meta-row">
                   <span>Sender identities: <strong>{payee.identities.map((i) => i.senderAddr).join(", ") || "none"}</strong></span>
+                </div>
+
+                {/* Auto-pay opt-in — off by default; also gated globally by
+                    AUTO_PAY_MODE, so this alone does not turn anything on
+                    unless the deployment has that enabled too. */}
+                <div className="payee-meta-row" style={{ alignItems: "center", gap: "10px" }}>
+                  <span
+                    className={`tag ${payee.autoPayEnabled ? "tag-accent-2" : "tag-neutral"}`}
+                    title="Auto-pay still requires every guardrail to pass on each invoice, and the deployment-wide AUTO_PAY_MODE switch to be on."
+                  >
+                    {payee.autoPayEnabled ? "Auto-pay on" : "Auto-pay off"}
+                  </span>
+                  <form action={toggleAutoPayAction}>
+                    <input type="hidden" name="payeeId" value={payee.id} />
+                    <button type="submit" className="btn btn-secondary" style={{ padding: "4px 10px", fontSize: "12px" }}>
+                      {payee.autoPayEnabled ? "Turn off" : "Turn on"}
+                    </button>
+                  </form>
                 </div>
 
                 {/* Rails */}

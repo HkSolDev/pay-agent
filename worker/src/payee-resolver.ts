@@ -13,6 +13,17 @@ export interface ApprovedPayee {
   senderAddr: string;
   recipientNickname: string;
   paymentMethod: PaymentMethod;
+  // Static grant terms, needed to decide auto-pay eligibility (worker/src/level1-pipeline.ts)
+  // without a second DB round trip — usage against these caps is looked up
+  // separately, since that changes payment to payment.
+  grant: {
+    autoPayEnabled: boolean;
+    payeeStatus: string;
+    perPaymentCapInr: string | null;
+    totalCapInr: string | null;
+    maxPayments: number | null;
+    expiresAt: string | null;
+  };
 }
 
 export interface ResolveRequest {

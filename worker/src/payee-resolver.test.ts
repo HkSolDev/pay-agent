@@ -2,11 +2,20 @@ import { describe, expect, it } from "vitest";
 import { resolvePayee, type ApprovedPayee, type PaymentMethod } from "./payee-resolver.js";
 
 const upi = (vpa: string): PaymentMethod => ({ kind: "upi", vpa });
+const noGrant: ApprovedPayee["grant"] = {
+  autoPayEnabled: false,
+  payeeStatus: "approved",
+  perPaymentCapInr: null,
+  totalCapInr: null,
+  maxPayments: null,
+  expiresAt: null,
+};
 const approved: ApprovedPayee[] = [{
   payeeId: "riya-1",
   senderAddr: "riya@example.com",
   recipientNickname: "riya-perflo",
   paymentMethod: upi("riya@okaxis"),
+  grant: noGrant,
 }];
 
 describe("Payee resolver — owner-approved identity and rail matching", () => {
@@ -36,6 +45,7 @@ describe("Payee resolver — owner-approved identity and rail matching", () => {
       senderAddr: "aman@example.com",
       recipientNickname: "aman-perflo",
       paymentMethod: upi("aman@icici"),
+      grant: noGrant,
     }];
 
     expect(resolvePayee({ senderAddr: "riya@example.com", paymentMethod: upi("aman@icici") }, records))

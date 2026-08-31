@@ -53,6 +53,7 @@ describe("Payee store — real Postgres encrypted-rail integration", () => {
     expect(loaded).toContainEqual({
       payeeId: ids[0], senderAddr: "billing@riya.example", recipientNickname: "riya-perflo",
       paymentMethod: { kind: "upi", vpa: "riya@okaxis" },
+      grant: { autoPayEnabled: false, payeeStatus: "pending", perPaymentCapInr: null, totalCapInr: null, maxPayments: null, expiresAt: null },
     });
     expect(loaded).not.toEqual(expect.arrayContaining([expect.objectContaining({ payeeId: ids[1] })]));
 

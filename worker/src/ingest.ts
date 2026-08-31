@@ -12,6 +12,8 @@ import { processLevel1, type Level1PipelineResult } from "./level1-pipeline.js";
 import type { ApprovedPayee } from "./payee-resolver.js";
 import type { PayableFingerprint } from "./duplicate-detector.js";
 import { loadApprovedPayees } from "./payee-store.js";
+import { loadPayeeUsage } from "./payment-usage.js";
+import { runAutoPayIfEligible } from "./auto-pay-runner.js";
 
 export const MAX_PDF_ATTACHMENTS_PER_EMAIL = 3;
 export const MAX_PDF_ATTACHMENT_BYTES = 10 * 1024 * 1024;
@@ -160,6 +162,7 @@ async function processEmailRow(
       links: linksFromJson(row.links),
       approvedPayees,
       duplicateHistory: history,
+      loadPayeeUsage,
     }, extract);
 
     await prisma.email.update({
@@ -176,6 +179,15 @@ async function processEmailRow(
         level1ProcessedAt: new Date(),
       },
     });
+
+    if (result.decision === "auto_pay" && result.resolution.status === "resolved" && result.extraction.amount) {
+      await runAutoPayIfEligible({
+        emailId: row.id,
+        policyDecision: result.decision,
+        recipientNickname: result.resolution.recipientNickname,
+        amount: result.extraction.amount.value,
+      });
+    }
 }
 
 const processableEmailSelect = {

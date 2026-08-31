@@ -25,6 +25,11 @@ export interface PolicyInput {
   grant: { active: boolean; notExpired: boolean; perPaymentCapOk: boolean; remainingAmountOk: boolean; remainingCountOk: boolean };
   amountWithinOwnerCeiling: boolean;
   paused: boolean;
+  // Per-payee opt-in (worker/src/auto-pay-gate.ts's other half of the gate,
+  // alongside the global AUTO_PAY_MODE switch this `paused` field already
+  // represents). Optional and defaults to true so every existing caller
+  // that doesn't care about this axis keeps behaving exactly as before.
+  payeeAutoPayEnabled?: boolean;
 }
 
 const CONFIDENCE_BAR = 0.9;
@@ -84,6 +89,7 @@ export function decidePolicy(input: PolicyInput): { decision: PolicyDecision; re
   if (!input.amountWithinOwnerCeiling) reasons.push("Amount exceeds the owner's auto-pay ceiling.");
 
   if (input.paused) reasons.push("Global pause is enabled.");
+  if (input.payeeAutoPayEnabled === false) reasons.push("Auto-pay is not enabled for this payee.");
 
   if (reasons.length > 0) return { decision: "needs_approval", reasons };
 
