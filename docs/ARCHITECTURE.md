@@ -136,7 +136,7 @@ flowchart TD
     DECISION -- "Hard Fail / Injection / Phishing" --> QUARANTINE["quarantine\n(Hard security alert in UI)"]
     DECISION -- "Duplicate / Replayed" --> IGNORE["ignore\n(Suppressed from payouts)"]
     DECISION -- "Missing Field / Confidence < 90% / Over Cap / Manual" --> NEEDS_APP["needs_approval\n(Enters Owner Approval Queue)"]
-    DECISION -- "100% Match + Confidence >= 90% + Cap OK + Auto-Pay ON" --> AUTO_PAY["auto_pay\n(Automated Execution)"]
+    DECISION -- "Required confidence >= 90% + exact rail + caps OK + both auto-pay switches ON" --> AUTO_PAY["auto_pay\n(Automated Execution)"]
 
     AUTO_PAY --> EXECUTE_AUTO["runAutoPayIfEligible()\n(worker/src/auto-pay-runner.ts)"]
     EXECUTE_AUTO --> RAZORPAY_OUT["RazorpayX Payout API"]
@@ -158,7 +158,6 @@ Payees are modeled with a **1-to-Many relational structure** supporting multiple
 erDiagram
     Payee ||--o{ PayeeIdentity : "has sender emails (1:N)"
     Payee ||--o{ PayeePaymentMethod : "has payment rails (1:N)"
-    Payee ||--o| PaymentIntent : "referenced by recipientNickname"
     Email ||--o| PaymentIntent : "unique email_id (1:1)"
     PayeePaymentMethod ||--o| PayeePaymentMethod : "replacedByMethodId (versioned)"
 
@@ -206,7 +205,7 @@ erDiagram
         string subject
         string bodyText
         json extractionSummary
-        string extractionBackend "llm | regex"
+        string extractionBackend "llm | deterministic"
         string resolvedPayeeId
         json payeeResolution
         json verificationResult
@@ -228,8 +227,10 @@ erDiagram
         string lastError
         datetime claimedAt
         datetime paidAt
-    }
+}
 ```
+
+`PaymentIntent` intentionally has no Prisma `payeeId` foreign key in the current v0 schema. It stores the resolved `recipientNickname`, while the server-side executor looks up the current approved payee and rail before sending. The payee-to-payment relationship in the runtime flow is therefore logical, not a relational foreign key.
 
 ---
 
@@ -244,7 +245,7 @@ stateDiagram-v2
 
     state ManualGate {
         Idle --> Preparing: Owner clicks "Prepare payment"
-        Preparing --> Pending: Owner enters/verifies nickname & amount
+        Preparing --> Pending: Server loads DB-resolved payee and extracted amount
         Preparing --> Idle: Owner cancels
         Pending --> Claimed: Owner clicks "Confirm & pay"
     }
