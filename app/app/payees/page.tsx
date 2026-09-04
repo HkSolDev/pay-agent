@@ -20,11 +20,28 @@ function maskedValueFor(encryptedPayload: Uint8Array): string {
   return method ? maskRailValue(method) : "Unreadable rail";
 }
 
+// Copy for the pending_grant / not_approved states (plan §5): "waiting"
+// draws attention without being alarming; expired reads as neutral and
+// retryable; denied reads as "you said no" — neither gets the failure-red
+// treatment, since neither is actually an error in this app's own terms.
+function grantStatusLabel(payee: { status: string; lastGrantOutcome: string | null }): { text: string; className: string } {
+  if (payee.status === "pending_grant") return { text: "waiting for approval", className: "tag-accent" };
+  if (payee.status === "approved") return { text: "approved", className: "tag-accent-2" };
+  if (payee.status === "not_approved" && payee.lastGrantOutcome === "denied") return { text: "approval denied", className: "tag-neutral" };
+  if (payee.status === "not_approved" && payee.lastGrantOutcome === "expired") return { text: "approval expired", className: "tag-neutral" };
+  return { text: payee.status, className: "tag-neutral" };
+}
+
 export default async function PayeesPage() {
   const payees = await prisma.payee.findMany({
     orderBy: { createdAt: "desc" },
     include: { identities: true, paymentMethods: { orderBy: { createdAt: "desc" } } },
   });
+
+  // The one-pending-grant-at-a-time lock (plan §1): checked here, on page
+  // load, the same way any other server-rendered state is — not just left
+  // to fail after a click. `undefined` when nothing is currently locked.
+  const lockedByPayeeName = payees.find((p) => p.status === "pending_grant")?.name;
 
   return (
     <main className="shell">
@@ -62,7 +79,7 @@ export default async function PayeesPage() {
         <h2 id="add-payee-heading" style={{ margin: "0 0 14px", fontSize: "20px" }}>
           Add payee
         </h2>
-        <PayeeForm />
+        <PayeeForm lockedByPayeeName={lockedByPayeeName} />
       </section>
 
       {/* Payees List Card */}
@@ -87,12 +104,30 @@ export default async function PayeesPage() {
                 {/* Name + status tag */}
                 <div className="payee-block-header">
                   <h3 style={{ margin: 0 }}>{payee.name}</h3>
-                  <span
-                    className={`tag ${payee.status === "approved" ? "tag-accent-2" : "tag-neutral"}`}
-                  >
-                    {payee.status}
+                  <span className={`tag ${grantStatusLabel(payee).className}`}>
+                    {grantStatusLabel(payee).text}
                   </span>
                 </div>
+
+                {/* Waiting for the owner to click through in Perflo — the
+                    URL appears the moment perflo-cli.ts's streaming parser
+                    captures it; before that, a plain "starting..." notice
+                    rather than a broken or empty link. */}
+                {payee.status === "pending_grant" ? (
+                  <p className="empty-copy" style={{ margin: "2px 0 0", fontSize: "13px" }}>
+                    {payee.pendingGrantApprovalUrl ? (
+                      <>
+                        Waiting for your approval in Perflo —{" "}
+                        <a href={payee.pendingGrantApprovalUrl} target="_blank" rel="noopener noreferrer">
+                          open the approval link
+                        </a>
+                        .
+                      </>
+                    ) : (
+                      "Starting the approval request…"
+                    )}
+                  </p>
+                ) : null}
 
                 {/* Meta row */}
                 <div className="payee-meta-row">

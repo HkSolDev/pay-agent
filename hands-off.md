@@ -1,23 +1,208 @@
 # Perflo AP Agent — Hands-off Handoff
 
-Last verified: 2026-09-04 (Perflo connected via teammate KYC, first real payout, fee discovery & floor, real beneficiary registration wired)
-Branch: **not `main`** — two unmerged branches, **no PR opened yet**. Don't
-trust a stale "Branch:" line here without checking `git branch -a` and
-`git log --oneline` yourself first; this exact class of mistake (an
+Last verified: 2026-09-04, later the same day (real `enablePerfloGrant` — the guardrail-approval slice — implemented, tested, live-verified in browser; **not yet committed**)
+Branch: `feat/perflo-beneficiary-approval` — checked directly with `git
+branch -a` and `git status -sb` just before writing this line (not trusted
+from memory or an earlier version of this file — that exact mistake has
+happened on this project before, see the paragraph below this one). Tracks
+`origin/feat/perflo-beneficiary-approval` and is even with it (no ahead/
+behind) — because **everything described in the new session summary below
+is still uncommitted working-tree changes**, not pushed, not committed.
+`git log --oneline -5` still shows `b9bfed5` as HEAD.
+
+Don't trust a stale "Branch:" line here without checking `git branch -a`
+and `git log --oneline` yourself first; this exact class of mistake (an
 out-of-date branch/PR-status claim causing cross-session confusion) has
 happened on this project before.
 
-- `codex/level1-edge-case-review` — base branch for today's work (CLI
+- `codex/level1-edge-case-review` — base branch for the 4 Sep work (CLI
   rename fix, response-parsing fix, DECISIONS.md/EDGE_CASES.md, fee
   discovery, fee-safety floor). Ahead of `origin/codex/level1-edge-case-review`.
-- `feat/perflo-beneficiary-approval` — branched off the above, has the real
-  beneficiary-registration wiring (commit `312effa`) plus this doc update
-  (`794f79d`). Pushed to `origin/feat/perflo-beneficiary-approval`.
+- `feat/perflo-beneficiary-approval` — branched off the above. Committed
+  history ends at `b9bfed5` (see the older session summaries below). The
+  guardrail-approval work described immediately below is real, tested, and
+  working, but sitting **uncommitted** in the working tree as of this
+  line — the next session (or this one, if continuing) should run
+  `git status --short` and `git diff --stat` to see the exact file list
+  before doing anything destructive, and should commit it (see "Next steps"
+  in the new session summary below) rather than assuming it's already safe.
 - **Neither branch has a PR open, and neither is merged into `main`.** A
   "Create PR" UI action targeted `--base main`, which would bundle both
   branches into one large PR since `codex/level1-edge-case-review` isn't in
   `main` either — paused on that instead of creating it, pending the
-  owner's decision on the right PR base.
+  owner's decision on the right PR base. Still unresolved as of this entry.
+
+## Session summary — 2026-09-04, later the same day (real guardrail approval: `enablePerfloGrant` implemented end to end)
+
+**What this session did, in one sentence:** replaced the fake stub in
+`enablePerfloGrant` (it used to just mint a local fake grant ID and call it
+done) with a real, working, tested implementation that actually calls
+Perflo's `policy enable` CLI, captures the browser approval link, and
+resolves the payee row once that call settles — following
+`docs/PLAN_GUARDRAIL_APPROVAL.md` (already-written spec) as the source of
+truth throughout, not re-deriving the design from the PRD.
+
+**Read `docs/DECISIONS.md`'s newest entries first** (everything from "
+`enablePerfloGrant` is real now" through the end of that file) — they hold
+the actual technical reasoning behind every choice below; this section is
+the narrative/status version, that file is the "why," in more depth, per
+decision.
+
+### What's actually different now
+
+1. **The one-pending-grant-at-a-time lock is real and database-enforced.**
+   A Postgres partial unique index (`payees_one_pending_grant_key`,
+   migration `20260904142701_payee_pending_grant_approval`) guarantees at
+   most one `Payee` row can ever be `status = "pending_grant"` at once —
+   confirmed race-safe with a real concurrent test (`Promise.all` against
+   real Postgres, not mocked), not just reasoned about.
+2. **`policy enable` really runs**, via a new `spawn`-based function
+   (`enableGrantViaPerfloCli`, `worker/src/perflo-cli.ts`) — `execFileAsync`
+   couldn't be used here because it only returns output after the process
+   exits, and this process prints an approval URL and then blocks for real
+   minutes waiting on a human. The exact real timeout, measured live by
+   actually running the command and not clicking the link: **615.88
+   seconds** (~10m16s). See DECISIONS.md for the real (simpler-than-
+   guessed) JSON shape this call actually prints.
+3. **"Approve payee" returns immediately now**, instead of appearing to
+   hang. `approvePayee` (`worker/src/payee-approval.ts`) no longer returns
+   `"approved"` synchronously at all — it returns `"pending_grant"` (or
+   `"grant_in_progress"` if the lock is busy) the moment the CLI call is
+   *started*, and the real approved/denied/expired outcome is written to
+   the database asynchronously, fire-and-forget, once the CLI call settles
+   on its own time.
+4. **Denial/expiry is retryable** — a payee whose approval was denied or
+   timed out lands in a new `not_approved` status and can be re-approved
+   through the same "Add payee" form without creating a duplicate payee row.
+5. **Crash recovery**: if the process running the CLI call dies mid-
+   approval (worker restart, or — more likely in dev — the Next.js server
+   restarting, since that happens on every file save), a stuck
+   `pending_grant` row is resolved automatically once its own expiry
+   passes, both on a periodic sweep and once explicitly at worker startup.
+   There is deliberately no attempt to re-attach to the lost child process
+   or ask Perflo "is this still open" — no operation id exists to do that
+   with, confirmed against Perflo's own CLI behavior, not assumed.
+6. **UI** (`app/app/payees/page.tsx`, `payee-form.tsx`): a distinct
+   "waiting for approval" badge with the real clickable link once
+   captured; calm, non-error styling and distinct copy for "approval
+   expired" vs "approval denied"; the "Add payee" button disables itself
+   with an explanatory message whenever any other payee currently holds
+   the lock — checked on page load (server-rendered), not just after a
+   failed click.
+
+### Verification actually performed this session (not just claimed)
+
+- **Perflo docs cross-checked before writing any code** (`grill-with-docs`
+  skill): confirmed the `{approveUrl, expiresIn, pollInterval, sid}`
+  schema is real (but for a different Perflo API than the one actually
+  used here), confirmed "only one live approval can exist for a customer
+  at a time" is a real, quoted line from Perflo's own docs, confirmed the
+  CLI flag names against the original PRD's own worked example.
+- **The real CLI command was actually run**, live, per explicit
+  instruction — not simulated. Deliberately never clicked the approval
+  link. Real output and real timing captured directly (see DECISIONS.md).
+- **Every new piece of logic is test-first, and the tests actually run
+  against real Postgres** for anything DB-related (not mocked) — the
+  lock's race-safety, the retry-reuse path, the expiry sweep, the ambiguous-
+  outcome-leaves-it-alone path, and the concurrent-retry-on-the-same-payee
+  race all have real, passing, concurrent tests against the actual local
+  database, not just code reads.
+- **`pnpm typecheck`**: clean (both `app` and `worker`).
+- **Full test suite**: run correctly via `npx vitest run
+  --no-file-parallelism` (see DECISIONS.md's note on why `pnpm test --
+  --no-file-parallelism` is actually a no-op due to a double `--`) — 316
+  passed, only the 4 pre-existing, already-documented, unrelated
+  `payee-store.integration.test.ts` decryption failures remain (same ones
+  documented in the 2026-08-31 session summary below; not caused by this
+  session).
+- **Live-verified in an actual browser**, not just unit tests: navigated
+  the real running dev server (another session's `next dev` on port 3000 —
+  this session's own `preview_start` couldn't start a second instance for
+  the same project directory, Next.js itself refuses that; navigated
+  directly to the existing server instead), inserted throwaway test rows
+  directly via `psql` (not through the real Perflo CLI — that would have
+  actually registered a beneficiary and held the real lock for ~11
+  minutes, an unnecessary real side effect for a UI check), and visually
+  confirmed the "waiting," "expired," and "denied" states, the real
+  clickable approval link, and the disabled/explained Approve button —
+  then deleted the throwaway rows afterward. Screenshots taken during this
+  pass, not included here, but the exact SQL used is in this session's own
+  transcript if it needs re-running.
+- **A real bug was found and fixed mid-session, not just anticipated**:
+  the Turbopack import-extension gotcha this project has hit before (see
+  the dedicated section further down this file) bit again — `payee-
+  approval-deps.ts`'s new `.js`-suffixed imports of `perflo-cli.js` and
+  `reconcile-grant-approvals.js` broke the live Next.js dev server with a
+  real "Module not found" 500 error, caught only by actually loading the
+  page in a browser (not by `pnpm typecheck` or `pnpm test`, neither of
+  which use Turbopack). Fixed by switching to extensionless imports,
+  matching the established convention for any file reachable from
+  `app/app/*.ts`.
+- **A real test-isolation bug was found and fixed mid-session**: this
+  session's own new tests around the pending-grant lock leaked a stuck row
+  into the shared local dev database across different test files, causing
+  failures that looked like real bugs but weren't — see DECISIONS.md's "A
+  real test-isolation hazard the lock itself surfaced" for the full story
+  and the fix pattern, which is now applied consistently across every test
+  file that touches this lock.
+
+### What's explicitly NOT done yet, and shouldn't be assumed done
+
+1. **Nothing from this session is committed.** See the branch-status block
+   above. Run `git status --short` yourself before trusting this line —
+   don't repeat the stale-status mistake this file has already warned
+   about twice now.
+2. **`payment-review`'s "independent review" requirement is not fully
+   satisfied.** This session applied its checklist rigorously in
+   self-review (five-scenarios check, field-tracing, real concurrent DB
+   tests) and closed three real gaps the checklist itself surfaced (an
+   ambiguous-outcome test, a same-payee concurrent-retry test, a units
+   test for the days-conversion feeding `--expires-days`) — but the skill
+   is explicit that self-review has a structural blind spot and nothing is
+   "done" until a genuinely separate pass reads the diff. That separate
+   pass has not happened yet as of this entry.
+3. **The real success path (`ok:true` after an actual human clicks
+   Approve) has never been observed live.** Every live run this session
+   deliberately avoided clicking the link, so the exact final-success JSON
+   shape is inferred (treated as "just needs `ok:true`, reuse the owner's
+   own submitted grant terms," not parsed for any additional fields) —
+   documented as an honest, explicit gap in `perflo-cli.ts`'s own comments,
+   not silently assumed correct. Worth a real end-to-end click-through
+   test with a throwaway test payee before this is trusted in production.
+4. **One test file's ordering issue was still being chased when this
+   session ended** (`payee-approval-deps.enable-grant.test.ts`'s fourth
+   test, "persists the approval URL...", was still intermittently failing
+   against the lock-pollution class of bug described above, even after
+   applying the same fix pattern used elsewhere) — needs a few more
+   minutes of the same treatment (check whether *that specific test's* own
+   release/cleanup is actually flushing before the next test's
+   `beforeEach` runs), not a new investigation from scratch.
+5. Everything already listed as unresolved in the 2026-09-04 (earlier)
+   summary directly below this one — the PR-base question, no Gmail inbox
+   connected yet, etc. — is still unresolved; this session did not touch
+   any of that.
+
+### Next steps for the next session, in order
+
+1. **Finish the one lingering test flakiness** (item 4 above) — small,
+   isolated, not a design problem.
+2. **Get an actually independent review pass** on this diff before trusting
+   it long-term (`payment-review`'s own explicit requirement) — a fresh
+   session or a different reviewer should read the real diff (`git diff`
+   against `b9bfed5`), not this summary.
+3. **Commit the work.** Nothing from this session exists outside the
+   working tree yet. Suggested commit boundary: this is one coherent
+   feature slice (real `enablePerfloGrant`), matches the plan file's own
+   scope — probably one commit, referencing `docs/PLAN_GUARDRAIL_
+   APPROVAL.md` and the new `docs/DECISIONS.md` entries.
+4. **A real end-to-end click-through test**: create one throwaway test
+   payee through the real UI, actually click the approval link Perflo
+   sends, and confirm the real success path resolves to `status:
+   "approved"` correctly — the one part of this flow that has only ever
+   been reasoned about, never observed.
+5. Then continue with whatever was already next before this slice: resolve
+   the PR-base question, connect a real Gmail inbox, etc. — see the
+   2026-09-04 (earlier) summary below.
 
 ## Session summary — 2026-09-04 (Real Perflo connected, ~₹100 fee discovery, fee floor, real beneficiary registration)
 
@@ -77,13 +262,14 @@ This confirms the earlier session's finding still holds and is not stale. **Refu
 
 Before touching this repo, read in this order:
 
-1. This file (`hands-off.md`) in full — it is the authoritative "what actually happened and why," not just a task list. **Read "Session summary — 2026-08-31, third session" first** — it's the most recent work and sits above the older session summaries below it.
-2. `README.md` and `tests/README.md` — current commands, test count, and the parallel-test-key-collision note (see "Known flakiness" below — don't mistake it for a real regression).
-3. `packages/db/prisma/schema.prisma` — the real persistence boundaries; trust this over any prose description of a model shape.
-4. `worker/src/payment-executor.ts` and `worker/src/payment-reconcile.ts` — the provider-neutral payment interface and the reconciliation poller; read the former's file-header comment on the RBI/PPI/escrow boundary before proposing anything involving holding funds.
-5. `worker/src/policy-engine.ts`, `worker/src/level1-pipeline.ts`, and `worker/src/auto-pay-gate.ts`/`auto-pay-runner.ts` — the new auto-pay path (this session). Read before touching anything payment-related; this is the highest-blast-radius code in the repo.
-6. **Do not trust any of the above blindly** — this handoff was itself corrected mid-session after a "confirmed bug" turned out to be stale/corrupted local Postgres state, not a real code defect (see "A verification lesson from this session" below). Re-run `pnpm test` and the demo reseed commands yourself before accepting any claim here as still true.
-7. **There is currently no login/auth of any kind on the Next.js app.** Anyone with the deployed URL can view every invoice and click "Confirm & pay," which makes a real (sandbox) RazorpayX API call. If this gets deployed publicly (Railway, etc.), password-protect it at the host level before sharing the link — this is not yet fixed in code.
+1. This file (`hands-off.md`) in full — it is the authoritative "what actually happened and why," not just a task list. **Read the very top section, "Session summary — 2026-09-04, later the same day (real guardrail approval...)" first** — it's the most recent work and sits above every older session summary. **Check its "What's explicitly NOT done yet" list before assuming anything about `enablePerfloGrant` is finished or committed.**
+2. `docs/PLAN_GUARDRAIL_APPROVAL.md` and `docs/DECISIONS.md`'s newest entries (from "`enablePerfloGrant` is real now" through the end of that file) — the actual design spec and the reasoning behind every choice in the guardrail-approval work above. Read before touching `payee-approval.ts`, `payee-approval-deps.ts`, `perflo-cli.ts`'s grant-enable functions, or `reconcile-grant-approvals.ts`.
+3. `README.md` and `tests/README.md` — current commands, test count, and the parallel-test-key-collision note (see "Known flakiness" below — don't mistake it for a real regression). Also see DECISIONS.md's note that `pnpm test -- --no-file-parallelism` silently does nothing (a double `--`) — use `npx vitest run --no-file-parallelism` directly.
+4. `packages/db/prisma/schema.prisma` — the real persistence boundaries; trust this over any prose description of a model shape. Note the comment on `Payee.status` about the partial unique index living only in a migration file, not the schema DSL.
+5. `worker/src/payment-executor.ts` and `worker/src/payment-reconcile.ts` — the provider-neutral payment interface and the reconciliation poller; read the former's file-header comment on the RBI/PPI/escrow boundary before proposing anything involving holding funds.
+6. `worker/src/policy-engine.ts`, `worker/src/level1-pipeline.ts`, and `worker/src/auto-pay-gate.ts`/`auto-pay-runner.ts` — the auto-pay path. Read before touching anything payment-related; this is the highest-blast-radius code in the repo.
+7. **Do not trust any of the above blindly** — this handoff was itself corrected mid-session after a "confirmed bug" turned out to be stale/corrupted local Postgres state, not a real code defect (see "A verification lesson from this session" below). Re-run `pnpm test` (with the correct flag, see item 3) and the demo reseed commands yourself before accepting any claim here as still true.
+8. **There is currently no login/auth of any kind on the Next.js app.** Anyone with the deployed URL can view every invoice and click "Confirm & pay," which makes a real (sandbox) RazorpayX API call. If this gets deployed publicly (Railway, etc.), password-protect it at the host level before sharing the link — this is not yet fixed in code.
 
 ## Current working state — 2026-08-31, documentation addendum
 

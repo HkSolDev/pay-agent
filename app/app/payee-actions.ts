@@ -53,6 +53,12 @@ export async function createPayeeAction(formData: FormData): Promise<void> {
 
   if (result.status === "confirmation_required") throw new Error("Confirm the payee approval before submitting.");
   if (result.status === "invalid_request") throw new Error("Invalid payee, rail, or grant details.");
+  // The one-pending-grant-at-a-time lock (Perflo's own rule: "only one live
+  // approval can exist for a customer at a time") — surfaced as a clear,
+  // actionable message rather than a raw database error.
+  if (result.status === "grant_in_progress") {
+    throw new Error("An approval is already in progress for another payee. Try again once it's done.");
+  }
   revalidatePath("/payees");
 }
 

@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { razorpayExecutorFromEnv, reconcileStuckPayments } from "./payment-reconcile.js";
+import { reconcileStuckGrantApprovals } from "./reconcile-grant-approvals.js";
 import { syncOnce } from "./sync.js";
 import { isSyncPaused } from "./sync-state.js";
 
@@ -43,10 +44,42 @@ async function pollOnce() {
       console.error("[reconcile] payment reconciliation failed, will retry next tick:", err);
     }
   }
+
+  // Expiry as a safety net for grant approvals (plan §3), independent of
+  // everything else above — a payee stuck in pending_grant past its own
+  // expiry (nobody clicked the browser link, or the worker restarted mid-
+  // approval — see the startup call in main() below) is resolved here even
+  // if nobody happens to click Approve on another payee to trigger the
+  // inline check in payee-approval-deps.ts's startPendingGrant.
+  try {
+    const { checked, expired } = await reconcileStuckGrantApprovals();
+    if (expired > 0) {
+      console.log(`[reconcile] checked ${checked} pending grant approval(s), expired ${expired}`);
+    }
+  } catch (err) {
+    console.error("[reconcile] grant approval reconciliation failed, will retry next tick:", err);
+  }
 }
 
 async function main() {
   console.log(`Perflo AP worker starting — polling Gmail every ${POLL_INTERVAL_SECONDS}s.`);
+
+  // Crash recovery (plan §4), before anything else: if this process
+  // restarted while a `policy enable` child process was running detached,
+  // the in-memory handle to it is gone — there is no operation id to
+  // re-attach to or ask Perflo "is this still open," so a pending_grant
+  // row is only ever recoverable by checking its own expiry. A row already
+  // past pendingGrantExpiresAt is resolved to expired right here, before
+  // Gmail sync or anything else runs; a row not yet expired is left alone
+  // for the next sweep (pollOnce below already covers that on its own
+  // interval, so this startup call is deliberately about the "already
+  // expired while nobody was looking" case specifically).
+  try {
+    const { checked, expired } = await reconcileStuckGrantApprovals();
+    console.log(`[reconcile] startup: checked ${checked} pending grant approval(s), expired ${expired}`);
+  } catch (err) {
+    console.error("[reconcile] startup grant approval reconciliation failed:", err);
+  }
 
   // Run once immediately (this is the "manual Sync now" behavior at startup),
   // then hand off to the interval.
