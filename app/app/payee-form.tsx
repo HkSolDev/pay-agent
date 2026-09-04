@@ -5,7 +5,7 @@ import { createPayeeAction } from "./payee-actions";
 import { validatePayeeForm, type PayeeFormErrors, type PayeeFormInput } from "./payee-form-model";
 
 const EMPTY: PayeeFormInput = {
-  name: "", senderAddr: "", rail: "upi", vpa: "", accountNumber: "", ifsc: "",
+  name: "", firstName: "", lastName: "", senderAddr: "", rail: "upi", vpa: "", accountNumber: "", ifsc: "",
   perPaymentCapInr: "", totalCapInr: "", maxPayments: "", expiresAt: "",
 };
 
@@ -48,6 +48,16 @@ export function PayeeForm() {
           <span>Payee name</span>
           <input name="name" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="e.g. Sunrise Textiles" />
           {errors.name ? <small className="field-error">{errors.name}</small> : null}
+        </label>
+        <label>
+          <span>First name</span>
+          <input name="firstName" value={form.firstName} onChange={(e) => set("firstName", e.target.value)} placeholder="e.g. Riya" />
+          {errors.firstName ? <small className="field-error">{errors.firstName}</small> : null}
+        </label>
+        <label>
+          <span>Last name</span>
+          <input name="lastName" value={form.lastName} onChange={(e) => set("lastName", e.target.value)} placeholder="e.g. Sharma" />
+          {errors.lastName ? <small className="field-error">{errors.lastName}</small> : null}
         </label>
         <label>
           <span>Sender email</span>

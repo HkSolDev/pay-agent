@@ -3,6 +3,8 @@ import { maskRailValue, validatePayeeForm, type PayeeFormInput } from "./payee-f
 
 const validUpi: PayeeFormInput = {
   name: "Riya Sharma",
+  firstName: "Riya",
+  lastName: "Sharma",
   senderAddr: "riya@example.com",
   rail: "upi",
   vpa: "riya@okaxis",
@@ -29,6 +31,15 @@ describe("payee form validation — required fields", () => {
     const result = validatePayeeForm({ ...validUpi, senderAddr: "not-an-email" });
     expect(result.valid).toBe(false);
     expect(result.errors.senderAddr).toBeTruthy();
+  });
+
+  // Perflo's beneficiary schema (bank.in.inr) requires firstName/lastName
+  // separately from the display `name` — splitting `name` on whitespace was
+  // considered and rejected (breaks on real names), so these are explicit
+  // required fields instead.
+  it("requires a first and last name", () => {
+    expect(validatePayeeForm({ ...validUpi, firstName: " " }).errors.firstName).toBeTruthy();
+    expect(validatePayeeForm({ ...validUpi, lastName: " " }).errors.lastName).toBeTruthy();
   });
 
   it("requires positive grant caps and a valid expiry", () => {

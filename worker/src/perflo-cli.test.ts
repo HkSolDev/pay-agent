@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { classifyPerfloStdout, PerfloDefiniteFailure, PerfloUnknownOutcomeError } from "./perflo-cli.js";
+import {
+  buildBeneficiaryAddArgs,
+  classifyBeneficiaryAddStdout,
+  classifyPerfloStdout,
+  PerfloDefiniteFailure,
+  PerfloUnknownOutcomeError,
+} from "./perflo-cli.js";
 
 describe("classifyPerfloStdout", () => {
   it("treats a clean {ok:false} response as a definite, retry-safe failure", () => {
@@ -48,5 +54,52 @@ describe("classifyPerfloStdout", () => {
     const realStdout = JSON.stringify({ ok: true, confirmed: true, status: "success", txHash: "0xdef456" });
     const noisyStderr = "npm warn deprecated some-package@1.0.0";
     expect(classifyPerfloStdout(realStdout, noisyStderr)).toEqual({ paymentReference: "0xdef456" });
+  });
+});
+
+describe("classifyBeneficiaryAddStdout", () => {
+  // Unlike a payment, the nickname is ours (we chose it before calling the
+  // CLI) — this only needs to tell apart success / definite failure /
+  // unknown, never parse a reference back out of the response.
+  it("does not throw on a clean {ok:true} response", () => {
+    const stdout = JSON.stringify({ ok: true });
+    expect(() => classifyBeneficiaryAddStdout(stdout)).not.toThrow();
+  });
+
+  it("treats a clean {ok:false} response as a definite, retry-safe failure", () => {
+    const stdout = JSON.stringify({
+      ok: false,
+      error: { code: "VALIDATION_ERROR", message: "invalid IFSC", recoverable: false },
+    });
+    expect(() => classifyBeneficiaryAddStdout(stdout)).toThrow(PerfloDefiniteFailure);
+  });
+
+  it("treats unparseable stdout as unknown, never as a safe-to-retry failure", () => {
+    expect(() => classifyBeneficiaryAddStdout("not json at all")).toThrow(PerfloUnknownOutcomeError);
+  });
+
+  it("finds the JSON on stderr even when stdout is npm warning noise", () => {
+    const noisyStdout = 'npm warn Unknown env config "npm-globalconfig".';
+    const realStderr = JSON.stringify({
+      ok: false,
+      error: { code: "ERROR", message: "Not connected. Run `perflo login` first.", recoverable: false },
+    });
+    expect(() => classifyBeneficiaryAddStdout(noisyStdout, realStderr)).toThrow(PerfloDefiniteFailure);
+  });
+});
+
+describe("buildBeneficiaryAddArgs", () => {
+  // Reproduced live 4 Sep 2026: the exact same call without --purpose-code
+  // is rejected with {"ok":false,"error":{"code":"purpose_required",...}}
+  // even though `beneficiary schemas --country IN` doesn't list it as
+  // required for bank.in.inr. Re-verified live with the flag present: ok:true.
+  it("always includes --purpose-code — omitting it is rejected live with purpose_required", () => {
+    const args = buildBeneficiaryAddArgs({
+      nickname: "test-payee", firstName: "Test", lastName: "Payee",
+      accountNumber: "99999999999", ifsc: "SBIN0050341",
+    });
+    const idx = args.indexOf("--purpose-code");
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(args[idx + 1]).toBe("PERSONAL_TRANSFER");
   });
 });

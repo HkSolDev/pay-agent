@@ -2,6 +2,8 @@ import { validatePaymentMethod, type PaymentMethod } from "../../worker/src/paym
 
 export interface PayeeFormInput {
   name: string;
+  firstName: string;
+  lastName: string;
   senderAddr: string;
   rail: "upi" | "bank_neft";
   vpa: string;
@@ -40,6 +42,8 @@ export function validatePayeeForm(input: PayeeFormInput): { valid: boolean; erro
   const errors: PayeeFormErrors = {};
 
   if (input.name.trim() === "") errors.name = "Payee name is required.";
+  if (input.firstName.trim() === "") errors.firstName = "First name is required.";
+  if (input.lastName.trim() === "") errors.lastName = "Last name is required.";
   if (!EMAIL.test(input.senderAddr)) errors.senderAddr = "Enter a valid sender email identity.";
 
   const method = paymentMethodFromForm(input);

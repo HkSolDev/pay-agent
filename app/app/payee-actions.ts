@@ -15,6 +15,8 @@ import { paymentMethodFromForm, validatePayeeForm, type PayeeFormInput } from ".
 function readFormInput(formData: FormData): PayeeFormInput {
   return {
     name: String(formData.get("name") ?? "").trim(),
+    firstName: String(formData.get("firstName") ?? "").trim(),
+    lastName: String(formData.get("lastName") ?? "").trim(),
     senderAddr: String(formData.get("senderAddr") ?? "").trim(),
     rail: String(formData.get("rail") ?? "upi").trim() as "upi" | "bank_neft",
     vpa: String(formData.get("vpa") ?? "").trim(),
@@ -37,6 +39,8 @@ export async function createPayeeAction(formData: FormData): Promise<void> {
   const result = await approvePayee({
     ownerConfirmed,
     name: input.name,
+    firstName: input.firstName,
+    lastName: input.lastName,
     senderAddr: input.senderAddr,
     paymentMethod: paymentMethodFromForm(input),
     grant: {

@@ -109,6 +109,34 @@ export function classifyPerfloStdout(...rawOutput: string[]): PerfloPayResult {
 }
 
 /**
+ * Pure, same shape as classifyPerfloStdout, but for `beneficiary add`. The
+ * nickname is chosen by the caller before the CLI is ever invoked, so unlike
+ * a payment there is no reference to parse back out of the response — this
+ * only needs to tell apart a clean success from a definite failure from a
+ * genuinely unreadable/unknown result.
+ */
+export function classifyBeneficiaryAddStdout(...rawOutput: string[]): void {
+  const jsonLine = extractJsonLine(...rawOutput);
+  if (jsonLine === null) {
+    throw new PerfloUnknownOutcomeError(
+      `Perflo CLI returned no parseable JSON: ${rawOutput.join(" | ")}`,
+    );
+  }
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(jsonLine) as Record<string, unknown>;
+  } catch {
+    throw new PerfloUnknownOutcomeError(`Perflo CLI returned unparseable output: ${jsonLine}`);
+  }
+
+  if (parsed.ok === false) {
+    const error = (parsed as unknown as PerfloJsonError).error;
+    throw new PerfloDefiniteFailure(`Perflo: ${error.message} (${error.code})`);
+  }
+}
+
+/**
  * Shells out to the real Perflo CLI to move money. Uses execFile with an
  * argument array — not a shell string — so nothing in `nickname`/`amount`
  * (ultimately owner-typed input from the UI) can be interpreted as shell
@@ -167,5 +195,76 @@ export async function payViaPerfloCli(args: {
     // inside classifyPerfloStdout by scanning both — confirmed by direct
     // reproduction that neither stream is reliably "the clean one."
     return classifyPerfloStdout(execErr.stdout ?? "", execErr.stderr ?? "");
+  }
+}
+
+/**
+ * Shells out to `perflo beneficiary add` to register a payee's rail with
+ * Perflo. Country/schema are hardcoded to India's only available rail
+ * (`bank.in.inr`, confirmed live via `beneficiary schemas --country IN` —
+ * there is still no UPI schema on this account). accountType is hardcoded to
+ * "individual" — the PRD scopes payees to individuals only, so the
+ * business/companyName branch of Perflo's schema is deliberately not wired
+ * up here.
+ *
+ * `--purpose-code PERSONAL_TRANSFER` is required even though `beneficiary
+ * schemas --country IN` doesn't list it as required for bank.in.inr —
+ * reproduced live: the same call without it is rejected with
+ * `{"ok":false,"error":{"code":"purpose_required",...,"details":
+ * {"accepted_purposes":["FAMILY_SUPPORT","PERSONAL_TRANSFER"]}}}`. This app
+ * pays vendors/invoices, not family support, so PERSONAL_TRANSFER is the
+ * correct fixed choice here, not a guess between the two.
+ */
+export interface BeneficiaryAddArgs {
+  nickname: string;
+  firstName: string;
+  lastName: string;
+  accountNumber: string;
+  ifsc: string;
+}
+
+/**
+ * Pure: builds the `beneficiary add` CLI argument list. Split out from
+ * createPerfloBeneficiary specifically so a missing/wrong flag (like the
+ * absent `--purpose-code` that caused a live `purpose_required` rejection,
+ * reproduced 4 Sep 2026 — not documented as required by `beneficiary
+ * schemas --country IN`, but enforced anyway) is something a unit test can
+ * catch directly, without needing a live CLI call every time.
+ */
+export function buildBeneficiaryAddArgs(args: BeneficiaryAddArgs): string[] {
+  return [
+    "--json", "beneficiary", "add",
+    "--name", `${args.firstName} ${args.lastName}`,
+    "--country", "IN",
+    "--schema", "bank.in.inr",
+    "--nickname", args.nickname,
+    "--purpose-code", "PERSONAL_TRANSFER",
+    "--field", "accountType=individual",
+    "--field", `firstName=${args.firstName}`,
+    "--field", `lastName=${args.lastName}`,
+    "--field", `bank_identifier=${args.ifsc}`,
+    "--field", `account_number=${args.accountNumber}`,
+  ];
+}
+
+export async function createPerfloBeneficiary(args: BeneficiaryAddArgs): Promise<void> {
+  const [cmd, ...prefixArgs] = (process.env.PERFLO_CLI_PATH ?? "npx @perflo/cli@latest").split(" ");
+  const cliArgs = [...prefixArgs, ...buildBeneficiaryAddArgs(args)];
+
+  try {
+    const result = await execFileAsync(cmd, cliArgs, { timeout: 60_000 });
+    classifyBeneficiaryAddStdout(result.stdout, result.stderr);
+  } catch (err) {
+    if (err instanceof PerfloDefiniteFailure || err instanceof PerfloUnknownOutcomeError) throw err;
+
+    const execErr = err as { stdout?: string; stderr?: string; message: string; killed?: boolean };
+
+    if (execErr.killed) {
+      throw new PerfloUnknownOutcomeError(
+        `Perflo CLI timed out — outcome unknown, do not retry: ${execErr.message}`,
+      );
+    }
+
+    classifyBeneficiaryAddStdout(execErr.stdout ?? "", execErr.stderr ?? "");
   }
 }

@@ -3,6 +3,11 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "@perflo-ap-agent/db";
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+// createPerfloRecipient now shells out to the real Perflo CLI
+// (payee-approval-deps.ts) — stub just the CLI call so this suite still
+// exercises the real, Postgres-backed approvePayee path end-to-end without
+// hitting the network.
+vi.mock("../../worker/src/perflo-cli", () => ({ createPerfloBeneficiary: vi.fn(async () => {}) }));
 
 const { createPayeeAction, replaceRailAction, revokeRailAction } = await import("./payee-actions");
 
@@ -23,11 +28,17 @@ function baseFormData(overrides: Record<string, string> = {}): FormData {
   const fd = new FormData();
   const fields: Record<string, string> = {
     name: "Payee Actions Vendor",
+    firstName: "Payee",
+    lastName: "Vendor",
     senderAddr,
-    rail: "upi",
-    vpa: "payee-actions@okaxis",
-    accountNumber: "",
-    ifsc: "",
+    rail: "bank_neft",
+    vpa: "",
+    // A distinct account number from other integration tests' bank fixtures
+    // (e.g. payee-approval-deps.integration.test.ts) — the rail's lookup
+    // hash is unique across all payees, so two test files reusing the same
+    // account number/IFSC collide on that constraint when run together.
+    accountNumber: "6020034567890",
+    ifsc: "ICIC0002345",
     perPaymentCapInr: "1000.00",
     totalCapInr: "5000.00",
     maxPayments: "5",
@@ -74,7 +85,7 @@ describe("createPayeeAction — never touches payment execution", () => {
   });
 
   it("rejects an invalid rail with a descriptive error, before writing anything", async () => {
-    await expect(createPayeeAction(baseFormData({ vpa: "billing@gmail.com" }))).rejects.toThrow(/UPI/);
+    await expect(createPayeeAction(baseFormData({ rail: "upi", vpa: "billing@gmail.com" }))).rejects.toThrow(/UPI/);
     await expect(prisma.payeeIdentity.findUnique({ where: { senderAddr } })).resolves.toBeNull();
   });
 });

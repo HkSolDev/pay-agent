@@ -11,6 +11,12 @@ export interface GrantRequest {
 export interface ApprovePayeeRequest {
   ownerConfirmed: boolean;
   name: string;
+  // The Perflo beneficiary's legal first/last name — kept separate from
+  // `name` (the display/lookup field used elsewhere) because splitting a
+  // free-text name on whitespace breaks on real names ("Mohammad Ali Khan",
+  // single-word names). Perflo's bank.in.inr schema requires both.
+  firstName: string;
+  lastName: string;
   senderAddr: string;
   paymentMethod: PaymentMethod;
   grant: GrantRequest;
@@ -32,7 +38,8 @@ function validPaymentMethod(method: PaymentMethod): boolean {
 }
 
 function validRequest(request: ApprovePayeeRequest): boolean {
-  return request.name.trim() !== "" && /^[^@\s]+@[^@\s]+$/.test(request.senderAddr)
+  return request.name.trim() !== "" && request.firstName.trim() !== "" && request.lastName.trim() !== ""
+    && /^[^@\s]+@[^@\s]+$/.test(request.senderAddr)
     && validPaymentMethod(request.paymentMethod)
     && validPositiveMoney(request.grant.perPaymentCapInr)
     && validPositiveMoney(request.grant.totalCapInr)
