@@ -108,7 +108,7 @@ export async function payViaPerfloCli(args: {
   nickname: string;
   amount: string;
   currency: string;
-  // Accepted, not forwarded: confirmed directly against `perflo recipient
+  // Accepted, not forwarded: confirmed directly against `perflo beneficiary
   // pay --help` — there is no --idempotency-key flag or equivalent, so
   // there's nowhere to put it on this call. It stays in the signature (the
   // caller still passes it) so that's an honest, visible fact about this
@@ -125,7 +125,11 @@ export async function payViaPerfloCli(args: {
   // ("₹500"), never a bare number — a bare amount silently trusts whatever
   // "money mode" the account happens to be in.
   const amountArg = args.currency === "USD" ? args.amount : `₹${args.amount}`;
-  const cliArgs = [...prefixArgs, "--json", "recipient", "pay", args.nickname, "--amount", amountArg];
+  // The CLI renamed `recipient` -> `beneficiary` and `grant` -> `policy`
+  // after the PRD was written (26 Aug); this call target was updated to
+  // match the installed @perflo/cli@6.1.0 on 4 Sep once Perflo was actually
+  // connected and this command was run for the first time.
+  const cliArgs = [...prefixArgs, "--json", "beneficiary", "pay", args.nickname, "--amount", amountArg];
   if (args.currency === "USD") cliArgs.push("--usd");
 
   try {
