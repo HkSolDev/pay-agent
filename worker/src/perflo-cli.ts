@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -267,4 +267,154 @@ export async function createPerfloBeneficiary(args: BeneficiaryAddArgs): Promise
 
     classifyBeneficiaryAddStdout(execErr.stdout ?? "", execErr.stderr ?? "");
   }
+}
+
+/**
+ * Measured live 4 Sep 2026: ran `policy enable testpayee --per-payment
+ * "1 INR" --total-cap "5 INR" --count 1 --expires-days 1 --json`,
+ * deliberately never clicked the approval link, and let it run. The CLI
+ * gave up on its own after 615.88s with a clean `{"ok":false,...}` denial
+ * (see perflo-cli.test.ts). This constant is that real number rounded up
+ * to a clean 11 minutes — comfortable margin so our own kill timer below
+ * is a backstop for a genuinely hung process, not the thing that normally
+ * ends the call. `Payee.pendingGrantExpiresAt` (payee-approval-deps.ts)
+ * uses this same value as its app-side ceiling, so the UI's "waiting"
+ * window and the process's own real timeout line up.
+ */
+export const GRANT_APPROVAL_TIMEOUT_MS = 660_000;
+
+export interface GrantEnableArgs {
+  nickname: string;
+  perPaymentCapInr: string;
+  totalCapInr: string;
+  maxPayments: number;
+  expiresDays: number;
+}
+
+/**
+ * Pure: builds the `policy enable` CLI argument list. Flags confirmed
+ * against the PRD's own worked example (§10.1: `perflo grant enable riya
+ * --per-payment 6 --total-cap 72 --count 12 --expires-days 365`) and
+ * re-confirmed live 4 Sep 2026 against the renamed `policy enable`
+ * subcommand — the flag names survived the `grant`->`policy` rename, only
+ * the subcommand itself changed (same pattern as `beneficiary add`).
+ * Caps get an explicit "INR" currency suffix, the same reasoning FR-26
+ * already applies to `beneficiary pay` — never a bare number.
+ */
+export function buildGrantEnableArgs(args: GrantEnableArgs): string[] {
+  return [
+    "--json", "policy", "enable", args.nickname,
+    "--per-payment", `${args.perPaymentCapInr} INR`,
+    "--total-cap", `${args.totalCapInr} INR`,
+    "--count", String(args.maxPayments),
+    "--expires-days", String(args.expiresDays),
+  ];
+}
+
+/**
+ * Pure: scans accumulated CLI output (stdout or stderr, called again as
+ * more chunks arrive) for the approval URL. Real shape, confirmed live
+ * 4 Sep 2026: `policy enable --json` prints `{"ok":true,
+ * "status":"awaiting_browser","approveUrl":"https://..."}` as its first
+ * line, then blocks — notably *not* the richer `{sid, approveUrl,
+ * pollInterval, expiresIn}` CliSignStart shape Perflo's own `/cli/sign/
+ * start` API docs describe; that's a different surface the CLI may or may
+ * not sign-start-relay through internally, but it is not what `--json`
+ * itself emits here. Scans every candidate line (not just the last, unlike
+ * extractJsonLine above) since the approval URL only ever appears in the
+ * *first* JSON line, well before the final result line this process
+ * eventually exits with. Falls back to a plain URL regex only if no JSON
+ * line parses with an `approveUrl` field — kept as a defensive fallback,
+ * not the primary path, since the real output is already structured JSON.
+ */
+export function extractApproveUrl(buffer: string): string | null {
+  const lines = buffer.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("{"));
+  for (const line of lines) {
+    try {
+      const parsed = JSON.parse(line) as Record<string, unknown>;
+      if (typeof parsed.approveUrl === "string" && parsed.approveUrl) return parsed.approveUrl;
+    } catch {
+      // Incomplete JSON — a chunk boundary can split a line mid-object.
+      // Not an error, just nothing to read yet; keep scanning other lines.
+    }
+  }
+  const match = buffer.match(/https?:\/\/\S+/);
+  return match ? match[0] : null;
+}
+
+/**
+ * Shells out to `perflo policy enable` to grant real spending authority
+ * against an already-registered beneficiary. Structurally different from
+ * every other function in this file: `policy enable` prints an approval
+ * URL and then *keeps running* while a human clicks it in a browser, for
+ * up to several minutes (see GRANT_APPROVAL_TIMEOUT_MS above) — so this
+ * needs `spawn` and its streaming `data` events, not `execFileAsync`,
+ * which only ever returns output after the process has already exited
+ * (useless here: by then there's nothing left to click). `onApproveUrl`
+ * fires the moment the URL is found in either stream, independent of the
+ * eventual exit outcome, so the caller (payee-approval-deps.ts) can
+ * persist it to the database immediately rather than waiting on
+ * `policy enable` to finish.
+ *
+ * Resolves on a clean `ok:true` exit. Throws PerfloDefiniteFailure on a
+ * clean `ok:false` exit (including the CLI's own internal approval
+ * timeout — confirmed live to be exactly this shape, see
+ * perflo-cli.test.ts) — that's Perflo giving a definite "no", which the
+ * caller resolves to `not_approved`/`lastGrantOutcome: "denied"`. Throws
+ * PerfloUnknownOutcomeError if this function's own timer has to kill the
+ * process, or the exit output is unparseable — an ambiguous result that
+ * intentionally does *not* resolve the payee row here; the expiry sweep
+ * (reconcile-grant-approvals.ts) is what eventually closes those out.
+ */
+export async function enableGrantViaPerfloCli(
+  args: GrantEnableArgs & { timeoutMs: number; onApproveUrl: (url: string) => void },
+): Promise<void> {
+  const [cmd, ...prefixArgs] = (process.env.PERFLO_CLI_PATH ?? "npx @perflo/cli@latest").split(" ");
+  const cliArgs = [...prefixArgs, ...buildGrantEnableArgs(args)];
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, cliArgs);
+    let stdout = "";
+    let stderr = "";
+    let urlCaptured = false;
+    let timedOut = false;
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, args.timeoutMs);
+
+    function checkForUrl() {
+      if (urlCaptured) return;
+      const url = extractApproveUrl(stdout) ?? extractApproveUrl(stderr);
+      if (url) {
+        urlCaptured = true;
+        args.onApproveUrl(url);
+      }
+    }
+
+    child.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString(); checkForUrl(); });
+    child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); checkForUrl(); });
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(new PerfloUnknownOutcomeError(`Perflo CLI failed to start: ${err.message}`));
+    });
+
+    child.on("close", () => {
+      clearTimeout(timer);
+      if (timedOut) {
+        reject(new PerfloUnknownOutcomeError(
+          "Perflo CLI grant approval was killed after exceeding the process timeout — outcome unknown, do not treat as denied.",
+        ));
+        return;
+      }
+      try {
+        classifyBeneficiaryAddStdout(stdout, stderr);
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
 }

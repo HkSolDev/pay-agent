@@ -6,9 +6,9 @@ function deps(): ApprovePayeeDeps & { calls: string[] } {
   return {
     calls,
     findExistingApproval: async () => null,
-    saveApprovedPayee: async (record) => { calls.push(`save:${record.senderAddr}`); return { payeeId: "riya-1", created: true }; },
     createPerfloRecipient: async () => { calls.push("recipient"); return { recipientNickname: "riya-perflo" }; },
-    enablePerfloGrant: async () => { calls.push("grant"); return { grantId: "grant-1" }; },
+    startPendingGrant: async () => { calls.push("startPendingGrant"); return { status: "started", payeeId: "riya-1" }; },
+    enablePerfloGrant: () => { calls.push("enablePerfloGrant"); },
   };
 }
 
@@ -29,19 +29,19 @@ describe("Payee approval — an owner-controlled setup event", () => {
     expect(d.calls).toEqual([]);
   });
 
-  it("creates a recipient and grant only for an explicitly approved normalized identity and rail", async () => {
+  it("creates a recipient and starts the grant approval for an explicitly approved normalized identity and rail", async () => {
     const d = deps();
-    await expect(approvePayee(request, d)).resolves.toEqual({ status: "approved", payeeId: "riya-1", grantId: "grant-1" });
-    expect(d.calls).toEqual(["recipient", "grant", "save:riya@example.com"]);
+    await expect(approvePayee(request, d)).resolves.toEqual({ status: "pending_grant", payeeId: "riya-1" });
+    expect(d.calls).toEqual(["recipient", "startPendingGrant", "enablePerfloGrant"]);
   });
 
   it("supports an approved bank rail without exposing a payment execution path", async () => {
     const d = deps();
-    let savedMethod: unknown;
-    d.saveApprovedPayee = async (record) => {
-      savedMethod = record.paymentMethod;
-      d.calls.push(`save:${record.senderAddr}`);
-      return { payeeId: "vendor-1", created: true };
+    let claimedInput: unknown;
+    d.startPendingGrant = async (input) => {
+      claimedInput = input.paymentMethod;
+      d.calls.push("startPendingGrant");
+      return { status: "started", payeeId: "vendor-1" };
     };
 
     await expect(approvePayee({
@@ -51,17 +51,30 @@ describe("Payee approval — an owner-controlled setup event", () => {
       lastName: "Services",
       senderAddr: "billing@vendor.example",
       paymentMethod: { kind: "bank_neft", accountNumber: "5010023456789", ifsc: "HDFC0001234", beneficiaryName: "Vendor Services" },
-    }, d)).resolves.toEqual({ status: "approved", payeeId: "vendor-1", grantId: "grant-1" });
+    }, d)).resolves.toEqual({ status: "pending_grant", payeeId: "vendor-1" });
 
-    expect(savedMethod).toEqual({ kind: "bank_neft", accountNumber: "5010023456789", ifsc: "HDFC0001234", beneficiaryName: "Vendor Services" });
-    expect(d.calls).toEqual(["recipient", "grant", "save:billing@vendor.example"]);
+    expect(claimedInput).toEqual({ kind: "bank_neft", accountNumber: "5010023456789", ifsc: "HDFC0001234", beneficiaryName: "Vendor Services" });
+    expect(d.calls).toEqual(["recipient", "startPendingGrant", "enablePerfloGrant"]);
   });
 
-  it("is idempotent: repeating the same approval never creates another recipient or grant", async () => {
+  it("is idempotent: repeating an already-approved senderAddr never creates another recipient or grant", async () => {
     const d = deps();
     d.findExistingApproval = async () => ({ payeeId: "riya-1" });
     await expect(approvePayee(request, d)).resolves.toEqual({ status: "already_approved", payeeId: "riya-1" });
     expect(d.calls).toEqual([]);
+  });
+
+  it("reports the one-pending-grant-at-a-time lock instead of starting a second CLI call", async () => {
+    const d = deps();
+    d.startPendingGrant = async () => { d.calls.push("startPendingGrant"); return { status: "locked" }; };
+
+    await expect(approvePayee(request, d)).resolves.toEqual({ status: "grant_in_progress" });
+    // The recipient (a real Perflo beneficiary registration) still happens —
+    // only the grant/CLI step is blocked by the lock — but enablePerfloGrant
+    // must never fire once the lock reports busy: kicking off a second
+    // `policy enable` while another one is already awaiting browser
+    // approval is exactly what the lock exists to prevent.
+    expect(d.calls).toEqual(["recipient", "startPendingGrant"]);
   });
 
   it("rejects invalid payment rails, unsafe grant caps, and missing beneficiary name fields before any external call", async () => {

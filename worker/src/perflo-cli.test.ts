@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   buildBeneficiaryAddArgs,
+  buildGrantEnableArgs,
   classifyBeneficiaryAddStdout,
   classifyPerfloStdout,
+  extractApproveUrl,
   PerfloDefiniteFailure,
   PerfloUnknownOutcomeError,
 } from "./perflo-cli.js";
@@ -85,6 +87,84 @@ describe("classifyBeneficiaryAddStdout", () => {
       error: { code: "ERROR", message: "Not connected. Run `perflo login` first.", recoverable: false },
     });
     expect(() => classifyBeneficiaryAddStdout(noisyStdout, realStderr)).toThrow(PerfloDefiniteFailure);
+  });
+});
+
+describe("classifyBeneficiaryAddStdout applied to policy enable's exit line", () => {
+  // Real shape, confirmed live 4 Sep 2026: ran `policy enable testpayee
+  // --per-payment "1 INR" --total-cap "5 INR" --count 1 --expires-days 1
+  // --json` and deliberately never clicked the approval link. The CLI itself
+  // gave up after 615.88s and printed this as its final line before exiting
+  // non-zero. This is a *definite* answer (ok:false, recoverable:false) —
+  // the same shape every other Perflo error uses — not an ambiguous/killed
+  // outcome, so it must classify as PerfloDefiniteFailure ("denied"), never
+  // PerfloUnknownOutcomeError ("expired" is reserved for cases where *we*
+  // never got a definite answer at all — see reconcile-grant-approvals.ts).
+  it("treats the CLI's own internal approval timeout as a definite denial, not an ambiguous outcome", () => {
+    const stdout = JSON.stringify({
+      ok: false,
+      error: { code: "ERROR", message: "policy allowing payments to testpayee timed out. Try again.", recoverable: false },
+    });
+    expect(() => classifyBeneficiaryAddStdout(stdout)).toThrow(PerfloDefiniteFailure);
+  });
+});
+
+describe("extractApproveUrl", () => {
+  // Real shape, confirmed live 4 Sep 2026 against `policy enable --json`:
+  // this is printed immediately as the first stdout line, then the process
+  // blocks waiting on the browser click. No separate sid/pollInterval/
+  // expiresIn fields, unlike the CliSignStart shape in Perflo's /cli/sign/
+  // start API docs — that richer schema turned out not to be what the CLI's
+  // own --json output actually emits for this command.
+  it("finds approveUrl in the real awaiting_browser JSON line", () => {
+    const buffer = '{"ok":true,"status":"awaiting_browser","approveUrl":"https://app.perflo.ai/approve?sid=bWyiGUyGFTHacL71Vd5H927Qck4FiQRu47qRn1qNV98"}\n';
+    expect(extractApproveUrl(buffer)).toBe("https://app.perflo.ai/approve?sid=bWyiGUyGFTHacL71Vd5H927Qck4FiQRu47qRn1qNV98");
+  });
+
+  it("finds the JSON line even with npm warning noise mixed into the same buffer", () => {
+    const buffer = 'npm warn Unknown env config "npm-globalconfig".\n{"ok":true,"status":"awaiting_browser","approveUrl":"https://app.perflo.ai/approve?sid=xyz"}\nnpm warn deprecated some-package@1.0.0\n';
+    expect(extractApproveUrl(buffer)).toBe("https://app.perflo.ai/approve?sid=xyz");
+  });
+
+  it("falls back to a plain URL regex when the buffer has no parseable JSON at all", () => {
+    const buffer = "Approve this policy request in your browser: https://app.perflo.ai/approve?sid=plain-text-fallback\n";
+    expect(extractApproveUrl(buffer)).toBe("https://app.perflo.ai/approve?sid=plain-text-fallback");
+  });
+
+  it("returns null on an empty or still-incomplete buffer, never throws", () => {
+    expect(extractApproveUrl("")).toBeNull();
+    // A chunk boundary can land mid-line — an incomplete JSON object must
+    // not crash the streaming parser; it just means "nothing found yet."
+    expect(extractApproveUrl('{"ok":true,"status":"awaiting_br')).toBeNull();
+  });
+
+  it("ignores a JSON line that has no approveUrl field", () => {
+    const buffer = '{"ok":false,"error":{"code":"ERROR","message":"policy allowing payments to testpayee timed out. Try again.","recoverable":false}}\n';
+    expect(extractApproveUrl(buffer)).toBeNull();
+  });
+});
+
+describe("buildGrantEnableArgs", () => {
+  // Flags confirmed against PRD §10.1's own worked example
+  // (`perflo grant enable riya --per-payment 6 --total-cap 72 --count 12
+  // --expires-days 365`) and re-confirmed live 4 Sep 2026 against the
+  // renamed `policy enable` subcommand — same flag names survived the
+  // grant->policy rename, only the subcommand changed.
+  it("builds the exact policy enable invocation, with an explicit INR currency suffix on both caps", () => {
+    const args = buildGrantEnableArgs({
+      nickname: "testpayee",
+      perPaymentCapInr: "1",
+      totalCapInr: "5",
+      maxPayments: 1,
+      expiresDays: 1,
+    });
+    expect(args).toEqual([
+      "--json", "policy", "enable", "testpayee",
+      "--per-payment", "1 INR",
+      "--total-cap", "5 INR",
+      "--count", "1",
+      "--expires-days", "1",
+    ]);
   });
 });
 

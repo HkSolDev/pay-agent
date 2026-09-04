@@ -155,11 +155,21 @@ model Payee {
   // its own is NOT the same as being allowed to auto-pay (FR-18: the grant
   // approval IS the new-payee approval, nothing less counts).
   grantApproved Boolean @default(false) @map("grant_approved")
-  // "pending" | "approved" | "revoked" — not a Prisma enum: this mirrors
+  // "pending" | "pending_grant" | "approved" | "revoked" — not a Prisma enum: this mirrors
   // PayeePaymentMethod.status below, kept as a plain string for the same
   // reason (owner-facing lifecycle labels, not a closed set worth an enum
   // migration every time a new one is added).
   status String @default("pending") @map("status")
+
+  // A raw-SQL partial unique index (migration 20260904142701) enforces
+  // "at most one row has status = 'pending_grant'" at the database level —
+  // not expressible here in schema.prisma, so it won't show up on this
+  // model. See that migration's own comment before touching this table's
+  // indexes.
+  pendingGrantStartedAt   DateTime? @map("pending_grant_started_at")
+  pendingGrantExpiresAt   DateTime? @map("pending_grant_expires_at")
+  lastGrantOutcome        String?   @map("last_grant_outcome") // "expired" | "denied", cleared once a new attempt starts
+  pendingGrantApprovalUrl String?   @map("pending_grant_approval_url")
 
   // The grant caps/expiry approvePayee already validates (GrantRequest) but,
   // until now, had nowhere real to persist — see worker/src/payee-approval.ts.

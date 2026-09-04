@@ -9,7 +9,15 @@ const EMPTY: PayeeFormInput = {
   perPaymentCapInr: "", totalCapInr: "", maxPayments: "", expiresAt: "",
 };
 
-export function PayeeForm() {
+export interface PayeeFormProps {
+  // The name of the payee currently holding the one-pending-grant-at-a-time
+  // lock (plan §1), or undefined when nothing is locked. Checked on page
+  // load, server-side, the same as any other rendered state — not left to
+  // fail only after a click.
+  lockedByPayeeName?: string;
+}
+
+export function PayeeForm({ lockedByPayeeName }: PayeeFormProps) {
   const [form, setForm] = useState<PayeeFormInput>(EMPTY);
   const [ownerConfirmed, setOwnerConfirmed] = useState(false);
   const [errors, setErrors] = useState<PayeeFormErrors>({});
@@ -136,9 +144,22 @@ export function PayeeForm() {
         <span>I confirm this payee, rail, and grant. This never sends a payment — it only approves who and how much can later be paid manually.</span>
       </label>
 
+      {lockedByPayeeName ? (
+        <p className="field-error" role="status">
+          An approval is already in progress for <strong>{lockedByPayeeName}</strong> — Perflo only allows one at a
+          time. Try again once it's done.
+        </p>
+      ) : null}
+
       {submitError ? <p className="field-error">{submitError}</p> : null}
 
-      <button type="submit" className="btn btn-primary" style={{ marginTop: "4px", width: "fit-content" }} disabled={pending}>
+      <button
+        type="submit"
+        className="btn btn-primary"
+        style={{ marginTop: "4px", width: "fit-content" }}
+        disabled={pending || !!lockedByPayeeName}
+        title={lockedByPayeeName ? "Another payee's approval is already in progress." : undefined}
+      >
         {/* plus icon */}
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 5v14M5 12h14" />

@@ -25,8 +25,21 @@ export interface ApprovePayeeRequest {
 export interface ApprovePayeeDeps {
   findExistingApproval: (request: ApprovePayeeRequest) => Promise<{ payeeId: string } | null>;
   createPerfloRecipient: (request: ApprovePayeeRequest) => Promise<{ recipientNickname: string }>;
-  enablePerfloGrant: (input: { recipientNickname: string; grant: GrantRequest }) => Promise<{ grantId: string }>;
-  saveApprovedPayee: (input: ApprovePayeeRequest & { recipientNickname: string; grantId: string }) => Promise<{ payeeId: string; created: boolean }>;
+  // Atomically claims the one-pending-grant-at-a-time lock and persists the
+  // payee row in "pending_grant" state — or reports the lock is already
+  // held by another payee's in-flight approval. See payee-approval-deps.ts
+  // for how the lock itself is enforced (a database-level constraint, not
+  // an application check-then-write).
+  startPendingGrant: (input: ApprovePayeeRequest & { recipientNickname: string }) => Promise<
+    | { status: "started"; payeeId: string }
+    | { status: "locked" }
+  >;
+  // Fires the real `policy enable` CLI call. Deliberately not awaited by
+  // approvePayee (see below) — `policy enable` blocks on a real browser
+  // approval for up to ~11 minutes, far too long to hold an HTTP request
+  // open. This resolves the payee row itself (to "approved" or
+  // "not_approved") on its own time, asynchronously, once the CLI exits.
+  enablePerfloGrant: (input: { payeeId: string; recipientNickname: string; grant: GrantRequest }) => void;
 }
 
 function validPositiveMoney(value: string): boolean {
@@ -51,11 +64,19 @@ function validRequest(request: ApprovePayeeRequest): boolean {
  * Owner approval is the only path that can create a recipient/grant mapping.
  * Existing approval is checked before external calls, preventing a reload or
  * double-click from creating a second Perflo recipient or grant.
+ *
+ * Two-phase, not synchronous end-to-end: `policy enable` blocks on a real
+ * browser approval that can take minutes, so this function only ever starts
+ * that process and returns — it never itself returns "approved" any more.
+ * The eventual approved/denied/expired outcome is written directly to the
+ * payee row by `enablePerfloGrant`'s own async continuation (or the expiry
+ * sweep), not through this function's return value.
  */
 export async function approvePayee(request: ApprovePayeeRequest, deps: ApprovePayeeDeps): Promise<
   { status: "confirmation_required" | "invalid_request" }
   | { status: "already_approved"; payeeId: string }
-  | { status: "approved"; payeeId: string; grantId: string }
+  | { status: "grant_in_progress" }
+  | { status: "pending_grant"; payeeId: string }
 > {
   if (!request.ownerConfirmed) return { status: "confirmation_required" };
   if (!validRequest(request)) return { status: "invalid_request" };
@@ -63,7 +84,9 @@ export async function approvePayee(request: ApprovePayeeRequest, deps: ApprovePa
   if (existing) return { status: "already_approved", payeeId: existing.payeeId };
 
   const recipient = await deps.createPerfloRecipient(request);
-  const grant = await deps.enablePerfloGrant({ recipientNickname: recipient.recipientNickname, grant: request.grant });
-  const saved = await deps.saveApprovedPayee({ ...request, recipientNickname: recipient.recipientNickname, grantId: grant.grantId });
-  return { status: "approved", payeeId: saved.payeeId, grantId: grant.grantId };
+  const started = await deps.startPendingGrant({ ...request, recipientNickname: recipient.recipientNickname });
+  if (started.status === "locked") return { status: "grant_in_progress" };
+
+  deps.enablePerfloGrant({ payeeId: started.payeeId, recipientNickname: recipient.recipientNickname, grant: request.grant });
+  return { status: "pending_grant", payeeId: started.payeeId };
 }
