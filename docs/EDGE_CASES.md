@@ -57,6 +57,17 @@ the PRD.
 | Perflo's India schema having no UPI rail, only bank/IFSC | Documented as an open question for Perflo (`DECISIONS.md`); payee storage stays rail-agnostic so no schema migration is needed once resolved | N/A — external dependency, not a code path to test |
 | RazorpayX and Perflo producing different reference/receipt shapes | `payment-executor-adapter.ts` normalizes both into one legacy result shape before the rest of the pipeline sees it | Yes — `payment-executor-adapter.test.ts` |
 
+## Payout economics (found live, 4 Sep 2026, not in the original PRD)
+
+| Edge case | Handled how | Tested |
+|---|---|---|
+| Small invoice amount vs. flat payout fee | Not handled in code at all — the connected account's INR payout rail charges a flat ~₹100 fee per transfer regardless of amount. A ₹200 test payment only delivered ₹99.20. Nothing in the policy engine currently checks whether an invoice amount is even worth paying given the fee — it would happily auto-pay a ₹50 invoice and lose ₹50+ to fees | Confirmed live (real ₹200 payment, real bank receipt) — no automated test exists, and no minimum-viable-amount check exists in `policy-engine.ts` |
+
+This is a real gap worth closing before auto-pay runs on genuinely small
+invoices: the policy engine should probably refuse (or at least flag) a
+payment whose fee would consume most of its value, similar in spirit to
+FR-19's other auto-pay gates.
+
 ## Known gaps, not edge cases handled poorly — just not built
 
 - x402 paid verification (email deliverability, headless-browser link opening, phone callback) — blocked on the same Perflo access issue as payments; only became reachable on 4 Sep, not yet used.

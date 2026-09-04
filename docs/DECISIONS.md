@@ -22,6 +22,34 @@ account's email and refuse to run if it isn't the owner. Real auto-pay against a
 teammate's money should not run unattended; only manual, confirmed test payments
 were run this way.
 
+## First fully successful Perflo payment — and a real ~₹100 flat fee discovered
+
+4 Sep 2026: after the two fake/underfunded test failures below, ran a real
+`beneficiary pay` of ₹200 to a real bank account (own account, real IFSC +
+account number). This one succeeded end to end: `beneficiary pay` returned
+`confirmed:true`, `tx status` showed `"status":"success"`, and the Perflo
+dashboard's own transfer receipt confirms it landed — **but only ₹99.20 of
+the ₹200 sent actually reached the bank account.** The dashboard shows the
+breakdown directly: ~2.117 USDC (≈₹200.06) debited, "Bank receives: 99.20
+INR". A separate quote for a ₹101 transfer in the dashboard UI showed the
+same pattern explicitly: "Fee: -100 INR".
+
+This means the payout rail on this account has a flat fee of roughly ₹100
+per transfer, regardless of amount sent. Consequences for this project:
+
+- The PRD's own suggested test amount, ₹20 (Section 14: "treat ₹20 as the
+  standard test amount"), is not usable on this account/rail — the fee alone
+  is 5x the transfer amount, so nothing meaningful would arrive.
+- Both earlier ₹1 test payments (below) likely failed for exactly this
+  reason: the fee exceeded the amount being sent, so there was nothing left
+  to actually pay out.
+- Real invoices this agent would auto-pay need to be well above ₹100 to be
+  worth paying through this rail at all — a genuine constraint on what
+  "auto-pay a small monthly bill" can mean in practice here.
+- Not yet confirmed whether this fee is fixed to this sandbox/teammate
+  account or is Perflo's standard production fee — worth asking directly
+  rather than assuming either way.
+
 ## First real Perflo payment call: response shape was also a guess, and was wrong
 
 4 Sep 2026: ran a real `beneficiary pay` against a deliberately-fake test
