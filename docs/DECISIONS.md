@@ -187,14 +187,30 @@ placeholders. This was necessary because testing "does the verifier catch a
 lookalike domain" realistically needs a range of sender addresses that a single
 real test inbox can't produce on its own.
 
-## Payee approval doesn't call Perflo yet — deliberately stubbed
+## Payee approval, split in two: beneficiary registration is real, the guardrail step is still stubbed
 
-`payee-approval-deps.ts`'s `createPerfloRecipient`/`enablePerfloGrant` generate
-a local nickname and grant ID instead of calling the CLI. This let the Payees
-UI, review routing, and the whole approval flow get built and demoed before any
-Perflo account was connected. Now that Perflo is connected (see above), this is
-the next thing that should be made real — it needs `beneficiary add` /
-`policy enable`, using the corrected command names.
+`payee-approval-deps.ts` originally faked both `createPerfloRecipient` and
+`enablePerfloGrant` (local nickname, local grant ID, no CLI call) so the
+Payees UI could be built and demoed before Perflo was connected.
+
+**As of commit `312effa`, only half of that is still true.**
+`createPerfloRecipient` now really calls `perflo beneficiary add` and
+registers a real Perflo beneficiary — clicking "Approve payee" today
+genuinely creates a real payee on Perflo's side.
+
+`enablePerfloGrant` is **still exactly the old stub** — it returns a fake
+local grant ID and never calls `policy enable`. No real spending guardrail
+gets set up, and no approval link is shown anywhere in the app yet. This
+matters because `policy enable` can't complete inside the same synchronous
+request `createPerfloRecipient` runs in — it blocks on a real browser/device
+approval that can take an unknown amount of time — so it has to become its
+own separate step (the two-phase `pending_grant` approach), not just a
+second function call bolted onto the same action. That's the next slice.
+
+**Don't read "beneficiary registration is real" as "the whole approval flow
+is real"** — this exact conflation has already caused confusion once (an
+answer describing the *intended* two-step UX got read as describing current
+behavior). Only step one exists in code right now.
 
 ## No login/auth built yet
 
