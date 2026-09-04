@@ -13,6 +13,7 @@ packages/db/generated/
 docs/
 graphify-out/
 .claude/
+.agents/
 brand.md
 skills-lock.json
 app/AGENTS.md
