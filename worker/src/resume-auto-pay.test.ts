@@ -57,7 +57,9 @@ function baseEmailData(id: string, payeeId: string, policyReasons: string[]) {
       amountConfidence: 0.95,
       paymentMethodConfidence: 0.95,
       referenceNumberConfidence: 0.95,
-      amount: { value: "100", currency: "INR" },
+      // Above AUTO_PAY_MIN_AMOUNT_INR's default fee-safety floor (₹200) —
+      // this fixture is testing pause-scoped resume behavior, not the floor.
+      amount: { value: "1000", currency: "INR" },
     },
     payeeResolution: { status: "resolved", payeeId, recipientNickname: `${payeeId}-nickname` },
     verificationResult: { authPassed: true, hardFails: [], score: 80 },

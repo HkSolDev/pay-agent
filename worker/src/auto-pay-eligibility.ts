@@ -43,3 +43,16 @@ export function amountWithinOwnerCeiling(amountInr: number): boolean {
   if (!Number.isFinite(ceiling) || ceiling <= 0) return true;
   return amountInr <= ceiling;
 }
+
+// The mirror image of amountWithinOwnerCeiling: a floor, not a ceiling.
+// Perflo charges a flat payout fee (confirmed live: a ₹200 payment only
+// delivered ₹99.20 net) — auto-pay firing on a small invoice can hand most
+// or all of it to the fee with no owner in the loop to notice. Unlike the
+// ceiling, this one is on by default (₹200) rather than defaulting to "no
+// restriction": fee-safety is a default, not an opt-in. See DECISIONS.md.
+export function amountAboveMinimum(amountInr: number): boolean {
+  const raw = process.env.AUTO_PAY_MIN_AMOUNT_INR;
+  const floor = raw === undefined ? 200 : Number(raw);
+  if (!Number.isFinite(floor) || floor <= 0) return amountInr > 200;
+  return amountInr > floor;
+}

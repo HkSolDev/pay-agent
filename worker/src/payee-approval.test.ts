@@ -15,6 +15,8 @@ function deps(): ApprovePayeeDeps & { calls: string[] } {
 const request = {
   ownerConfirmed: true,
   name: "Riya Sharma",
+  firstName: "Riya",
+  lastName: "Sharma",
   senderAddr: "riya@example.com",
   paymentMethod: { kind: "upi" as const, vpa: "riya@okaxis" },
   grant: { perPaymentCapInr: "1000.00", totalCapInr: "5000.00", maxPayments: 5, expiresAt: "2026-12-31" },
@@ -45,6 +47,8 @@ describe("Payee approval — an owner-controlled setup event", () => {
     await expect(approvePayee({
       ...request,
       name: "Vendor Services",
+      firstName: "Vendor",
+      lastName: "Services",
       senderAddr: "billing@vendor.example",
       paymentMethod: { kind: "bank_neft", accountNumber: "5010023456789", ifsc: "HDFC0001234", beneficiaryName: "Vendor Services" },
     }, d)).resolves.toEqual({ status: "approved", payeeId: "vendor-1", grantId: "grant-1" });
@@ -60,13 +64,15 @@ describe("Payee approval — an owner-controlled setup event", () => {
     expect(d.calls).toEqual([]);
   });
 
-  it("rejects invalid payment rails and unsafe grant caps before any external call", async () => {
+  it("rejects invalid payment rails, unsafe grant caps, and missing beneficiary name fields before any external call", async () => {
     for (const badRequest of [
       { ...request, paymentMethod: { kind: "upi" as const, vpa: "invalid" } },
       { ...request, paymentMethod: { kind: "bank_neft" as const, accountNumber: "5010023456789", ifsc: "NOTIFSC" } },
       { ...request, paymentMethod: { kind: "bank_neft" as const, accountNumber: "123", ifsc: "HDFC0001234" } },
       { ...request, grant: { ...request.grant, perPaymentCapInr: "0" } },
       { ...request, grant: { ...request.grant, maxPayments: 0 } },
+      { ...request, firstName: "" },
+      { ...request, lastName: "  " },
     ]) {
       const d = deps();
       await expect(approvePayee(badRequest, d)).resolves.toEqual({ status: "invalid_request" });

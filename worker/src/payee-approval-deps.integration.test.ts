@@ -20,9 +20,24 @@ async function cleanup() {
 const request = {
   ownerConfirmed: true,
   name: "Rail Deps Vendor",
+  firstName: "Rail",
+  lastName: "Vendor",
   senderAddr,
-  paymentMethod: { kind: "upi" as const, vpa: "rail-deps@okaxis" },
+  // bank_neft, not upi: the connected Perflo account has no UPI schema
+  // (confirmed live via `beneficiary schemas --country IN`), so
+  // createPerfloRecipient now throws for UPI — see payee-approval-deps.test.ts.
+  paymentMethod: { kind: "bank_neft" as const, accountNumber: "5010023456789", ifsc: "HDFC0001234" },
   grant: { perPaymentCapInr: "1000.00", totalCapInr: "5000.00", maxPayments: 5, expiresAt: "2026-12-31" },
+};
+
+// createPerfloRecipient now shells out to the real Perflo CLI (see
+// payee-approval-deps.ts), so this suite — which is about Postgres
+// persistence, not Perflo — stubs just that one dependency and keeps
+// findExistingApproval/saveApprovedPayee wired to the real, Postgres-backed
+// implementation. Keeps this file's "no Perflo call" premise true.
+const deps = {
+  ...realApprovePayeeDeps,
+  createPerfloRecipient: async () => ({ recipientNickname: "rail-deps-vendor-test" }),
 };
 
 beforeEach(async () => {
@@ -40,14 +55,23 @@ describe("payee-approval-deps module — structurally cannot execute a payment",
     const source = readFileSync(new URL("./payee-approval-deps.ts", import.meta.url), "utf8");
     const importLines = source.split("\n").filter((line) => line.trim().startsWith("import"));
     for (const line of importLines) {
-      expect(line).not.toMatch(/perflo-cli|manual-pay|payment-claim/);
+      expect(line).not.toMatch(/manual-pay|payment-claim/);
     }
+  });
+
+  // perflo-cli.js is legitimately imported now (createPerfloBeneficiary, to
+  // register a payee's rail with Perflo) — but the boundary this suite
+  // exists to guard is money movement specifically, so assert the one
+  // function that actually pays (payViaPerfloCli) is never pulled in here.
+  it("imports from perflo-cli.js only for beneficiary registration, never for payment", () => {
+    const source = readFileSync(new URL("./payee-approval-deps.ts", import.meta.url), "utf8");
+    expect(source).not.toMatch(/payViaPerfloCli/);
   });
 });
 
 describe("Real ApprovePayeeDeps — Postgres-backed approvePayee, no Perflo call", () => {
   it("persists a payee with grant fields and an encrypted rail", async () => {
-    const result = await approvePayee(request, realApprovePayeeDeps);
+    const result = await approvePayee(request, deps);
     expect(result.status).toBe("approved");
     if (result.status !== "approved") throw new Error("unreachable");
 
@@ -62,14 +86,14 @@ describe("Real ApprovePayeeDeps — Postgres-backed approvePayee, no Perflo call
 
     const method = await prisma.payeePaymentMethod.findFirstOrThrow({ where: { payeeId: result.payeeId } });
     expect(method.status).toBe("active");
-    expect(Buffer.from(method.encryptedPayload).toString("utf8")).not.toContain("rail-deps@okaxis");
+    expect(Buffer.from(method.encryptedPayload).toString("utf8")).not.toContain("5010023456789");
   });
 
   it("is idempotent against the real database: repeating the same senderAddr never creates a second payee", async () => {
-    const first = await approvePayee(request, realApprovePayeeDeps);
+    const first = await approvePayee(request, deps);
     expect(first.status).toBe("approved");
 
-    const second = await approvePayee(request, realApprovePayeeDeps);
+    const second = await approvePayee(request, deps);
     expect(second.status).toBe("already_approved");
     if (second.status !== "already_approved" || first.status !== "approved") throw new Error("unreachable");
     expect(second.payeeId).toBe(first.payeeId);

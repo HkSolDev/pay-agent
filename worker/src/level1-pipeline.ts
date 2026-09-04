@@ -5,7 +5,7 @@ import { findDuplicate, type DuplicateResult, type PayableFingerprint } from "./
 import { decidePolicy, applyCurrencyGuard, type PolicyDecision } from "./policy-engine.js";
 import { resolvePayee, type ApprovedPayee, type ResolveResult } from "./payee-resolver.js";
 import { verifyEmail, type VerificationResult } from "./verifier.js";
-import { computeGrantStatus, amountWithinOwnerCeiling, type PayeeUsage } from "./auto-pay-eligibility.js";
+import { computeGrantStatus, amountWithinOwnerCeiling, amountAboveMinimum, type PayeeUsage } from "./auto-pay-eligibility.js";
 
 export interface Level1PipelineInput {
   emailId: string;
@@ -64,6 +64,7 @@ function notPayableResult(classification: ClassificationResult, extraction: Extr
       duplicate: false,
       grant: { active: false, notExpired: false, perPaymentCapOk: false, remainingAmountOk: false, remainingCountOk: false },
       amountWithinOwnerCeiling: false,
+      amountAboveMinimum: false,
       paused: true,
     });
     return { extraction, resolution, verification, duplicate, decision: decision.decision, reasons: decision.reasons };
@@ -145,6 +146,7 @@ export async function processLevel1(
     duplicate: duplicate.duplicate,
     grant,
     amountWithinOwnerCeiling: Number.isFinite(amountInr) ? amountWithinOwnerCeiling(amountInr) : false,
+    amountAboveMinimum: Number.isFinite(amountInr) ? amountAboveMinimum(amountInr) : false,
     // The global kill switch — unset/anything but "on" means every payment
     // stays needs_approval no matter what else checks out, same as the
     // hardcoded-true behavior this replaces.

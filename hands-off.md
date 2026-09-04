@@ -1,7 +1,22 @@
 # Perflo AP Agent — Hands-off Handoff
 
-Last verified: 2026-08-31 (third session this day — runtime vs. permanent policy blockers, "Re-evaluate policy" / "Resume auto-pay")
-Branch: `codex/level1-edge-case-review`. **PR #8 is merged into `main`** (merge commit `3f16a68`) — `main` and this branch are byte-identical as of this update (`git diff origin/main..HEAD` is empty). The earlier "3 additional Level 0 commits on main" divergence warning in this line was itself stale by the time it was written — main had already absorbed everything via PR #7's merge before that warning was added — and is now fully resolved either way. If this line is ever stale again, don't trust it blindly: run `git fetch origin && git diff origin/main..HEAD --stat` yourself before assuming anything about sync state.
+Last verified: 2026-09-04 (Perflo connected via teammate KYC, first real payout, fee discovery & floor, real beneficiary registration wired)
+Branch: `main`.
+
+## Session summary — 2026-09-04 (Real Perflo connected, ~₹100 fee discovery, fee floor, real beneficiary registration)
+
+Five key commits landed:
+1. `370feb5` — Fixed Perflo pay response parsing: fields returned by `beneficiary pay` are top-level, not nested under `data`.
+2. `f6190be` & `cdfc204` — **First real Perflo payment succeeded end-to-end**: connected via teammate's (Abhinav) KYC account. Sent a real ₹200 bank transfer; confirmed `status: "success"` and verified in Perflo dashboard. **Discovered flat ~₹100 payout fee**: out of ₹200 sent, ₹99.20 arrived at bank. Cross-checked with Perflo docs: banking partner charges a fixed payout fee (~₹100).
+3. `1f18c76` — **Added fee-safety floor (`AUTO_PAY_MIN_AMOUNT_INR`)**: prevents auto-pay from firing on small invoices where fees eat the payout. Defaults to ₹200 (`amountInr > 200` required). Wired into `policy-engine.ts`, `auto-pay-eligibility.ts`, `level1-pipeline.ts`, and `reevaluate-policy.ts`.
+4. `312effa` — **Wired "Approve payee" to real Perflo beneficiary registration**: `payee-approval-deps.ts` now calls real Perflo CLI (`beneficiary add`) instead of generating fake local nicknames. Added `firstName`/`lastName` inputs and individual account purpose code. UPI rails are safely rejected with a clear error since the connected account has no UPI schema.
+
+**Next steps for the new session:**
+1. Two-phase approval / `pending_grant` for Perflo browser grant approval (`enablePerfloGrant`).
+2. Test adding a payee via the UI, syncing an invoice, and paying out via the live Perflo CLI integration.
+3. Keep manual confirm-and-pay safe while testing with the teammate's account.
+
+---
 
 ## Session summary — 2026-08-31, third session (runtime vs. permanent policy blockers)
 
