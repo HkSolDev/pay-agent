@@ -22,6 +22,21 @@ account's email and refuse to run if it isn't the owner. Real auto-pay against a
 teammate's money should not run unattended; only manual, confirmed test payments
 were run this way.
 
+## First real Perflo payment call: response shape was also a guess, and was wrong
+
+4 Sep 2026: ran a real `beneficiary pay` against a deliberately-fake test
+account (placeholder IFSC/account number, so nothing would actually reach a
+real person). Real response: `{"ok":true,"status":"timeout","moved":true,
+"confirmed":false,"paymentId":"...","txHash":"0x..."}` — fields are top-level,
+not nested under `data` as `perflo-cli.ts` guessed from the CLI's help text.
+`tx status` on that hash afterward showed `"status":"failed"` — the fake
+account was correctly rejected, no money reached anywhere. Fixed
+`classifyPerfloStdout` to read top-level fields and to treat `confirmed:false`
+as `PerfloUnknownOutcomeError` even when a `txHash` is present — a reference
+existing doesn't mean the payment landed, only `tx status`/`activity` can
+confirm that, which is exactly what the reconciler is for. Both affected unit
+tests (`perflo-cli.test.ts`) updated to the real shape.
+
 ## The Perflo CLI had renamed its commands since the PRD was written
 
 The PRD (26 Aug) documents `perflo recipient add` / `perflo grant enable` /

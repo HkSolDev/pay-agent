@@ -10,9 +10,16 @@ describe("classifyPerfloStdout", () => {
     expect(() => classifyPerfloStdout(stdout)).toThrow(PerfloDefiniteFailure);
   });
 
-  it("extracts a payment reference from a successful response", () => {
-    const stdout = JSON.stringify({ ok: true, data: { txHash: "0xabc123" } });
+  it("extracts a payment reference from a successful, confirmed response", () => {
+    // Real shape, confirmed 4 Sep 2026 against a live `beneficiary pay` call:
+    // fields are top-level, not nested under `data`.
+    const stdout = JSON.stringify({ ok: true, confirmed: true, status: "success", txHash: "0xabc123", paymentId: "pmt_1" });
     expect(classifyPerfloStdout(stdout)).toEqual({ paymentReference: "0xabc123" });
+  });
+
+  it("treats a reference with confirmed:false as unknown outcome, not success — reproduced live 4 Sep 2026", () => {
+    const stdout = JSON.stringify({ ok: true, status: "timeout", moved: true, confirmed: false, paymentId: "pmt_2", txHash: "0xghi789" });
+    expect(() => classifyPerfloStdout(stdout)).toThrow(PerfloUnknownOutcomeError);
   });
 
   it("treats unparseable stdout as unknown, never as a safe-to-retry failure", () => {
@@ -20,7 +27,7 @@ describe("classifyPerfloStdout", () => {
   });
 
   it("treats ok:true with no recognizable reference as unknown, not a failure — the payment may have gone through", () => {
-    const stdout = JSON.stringify({ ok: true, data: { somethingUnexpected: 1 } });
+    const stdout = JSON.stringify({ ok: true, somethingUnexpected: 1 });
     expect(() => classifyPerfloStdout(stdout)).toThrow(PerfloUnknownOutcomeError);
   });
 
@@ -38,7 +45,7 @@ describe("classifyPerfloStdout", () => {
   });
 
   it("finds the JSON on stdout even when stderr has unrelated noise", () => {
-    const realStdout = JSON.stringify({ ok: true, data: { txHash: "0xdef456" } });
+    const realStdout = JSON.stringify({ ok: true, confirmed: true, status: "success", txHash: "0xdef456" });
     const noisyStderr = "npm warn deprecated some-package@1.0.0";
     expect(classifyPerfloStdout(realStdout, noisyStderr)).toEqual({ paymentReference: "0xdef456" });
   });

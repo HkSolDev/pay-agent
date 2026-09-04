@@ -71,16 +71,21 @@ export function classifyPerfloStdout(...rawOutput: string[]): PerfloPayResult {
     throw new PerfloDefiniteFailure(`Perflo: ${error.message} (${error.code})`);
   }
 
-  // NOT independently verified against a real payment — this account's KYC
-  // hasn't cleared yet, so a live success response was never observed. Field
-  // names here are a best guess from the CLI's own help text; re-check this
-  // the first time a real payment actually completes.
-  const data = parsed.data as Record<string, unknown> | undefined;
+  // Verified 4 Sep 2026 against a real `beneficiary pay` call: the fields
+  // are top-level on the response, not nested under `data` (that was a
+  // guess from the CLI's help text, wrong). Real shape observed:
+  // {"ok":true,"status":"timeout","moved":true,"confirmed":false,
+  //  "paymentId":"...","txHash":"0x..."}. `confirmed:false` (seen live,
+  // via `tx status` afterward, that specific payment had actually failed)
+  // means Perflo itself doesn't yet know the outcome -- that is exactly
+  // FR-27's "any timeout or unknown result -> unknown_outcome, reconcile,
+  // never retried", even though `ok:true` and a txHash are both present.
   const reference =
-    (data?.txHash as string | undefined) ??
-    (data?.paymentRef as string | undefined) ??
-    (data?.reference as string | undefined) ??
-    (data?.id as string | undefined);
+    (parsed.txHash as string | undefined) ??
+    (parsed.paymentId as string | undefined) ??
+    (parsed.paymentRef as string | undefined) ??
+    (parsed.reference as string | undefined) ??
+    (parsed.id as string | undefined);
 
   if (!reference) {
     // ok:true but no reference we recognize — Perflo likely says it worked;
@@ -88,6 +93,15 @@ export function classifyPerfloStdout(...rawOutput: string[]): PerfloPayResult {
     // it didn't — unknown, not a safe retry.
     throw new PerfloUnknownOutcomeError(
       `Perflo reported success but no payment reference was found in the response: ${jsonLine}`,
+    );
+  }
+
+  if (parsed.confirmed === false) {
+    // A reference exists but Perflo hasn't confirmed the payment landed --
+    // the reconciler must resolve this via `tx status`/`activity`, not this
+    // function assuming success just because a txHash came back.
+    throw new PerfloUnknownOutcomeError(
+      `Perflo returned a reference but confirmed:false (status: ${String(parsed.status)}) — outcome unresolved, reference: ${reference}`,
     );
   }
 
