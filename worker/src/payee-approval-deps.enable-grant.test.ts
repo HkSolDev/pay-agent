@@ -23,6 +23,35 @@ function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+// onApproveUrl fires `void persistApproveUrl(...)` in production code — a
+// real, unawaited Postgres write (deliberately: onApproveUrl is a sync
+// callback deep in a streaming CLI parser with nothing to await it). A
+// single flushMicrotasks() tick is not guaranteed to be enough time for
+// that real network round-trip to land, especially with the rest of the
+// suite sharing the same DB connection pool — so poll for the write
+// instead of trusting a fixed number of ticks.
+async function waitForApprovalUrl(payeeId: string, timeoutMs = 2000): Promise<string | null> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const payee = await prisma.payee.findUniqueOrThrow({ where: { id: payeeId } });
+    if (payee.pendingGrantApprovalUrl !== null || Date.now() >= deadline) return payee.pendingGrantApprovalUrl;
+    await flushMicrotasks();
+  }
+}
+
+// Same reasoning as waitForApprovalUrl: applyGrantOutcome is also a real,
+// unawaited Postgres write reached after enablePerfloGrant's own promise
+// chain settles, so poll for the terminal status rather than trusting a
+// fixed number of ticks.
+async function waitForStatus(payeeId: string, timeoutMs = 2000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const payee = await prisma.payee.findUniqueOrThrow({ where: { id: payeeId } });
+    if (payee.status !== "pending_grant" || Date.now() >= deadline) return payee.status;
+    await flushMicrotasks();
+  }
+}
+
 async function makePendingPayee(id: string) {
   await prisma.payee.create({
     data: {
@@ -67,10 +96,10 @@ describe("realApprovePayeeDeps.enablePerfloGrant — the async continuation that
     await makePendingPayee("enable-grant-test-1");
 
     realApprovePayeeDeps.enablePerfloGrant({ payeeId: "enable-grant-test-1", recipientNickname: "x", grant });
-    await flushMicrotasks();
+    const status = await waitForStatus("enable-grant-test-1");
 
     const payee = await prisma.payee.findUniqueOrThrow({ where: { id: "enable-grant-test-1" } });
-    expect(payee.status).toBe("approved");
+    expect(status).toBe("approved");
     expect(payee.grantApproved).toBe(true);
   });
 
@@ -79,10 +108,10 @@ describe("realApprovePayeeDeps.enablePerfloGrant — the async continuation that
     await makePendingPayee("enable-grant-test-2");
 
     realApprovePayeeDeps.enablePerfloGrant({ payeeId: "enable-grant-test-2", recipientNickname: "x", grant });
-    await flushMicrotasks();
+    const status = await waitForStatus("enable-grant-test-2");
 
     const payee = await prisma.payee.findUniqueOrThrow({ where: { id: "enable-grant-test-2" } });
-    expect(payee.status).toBe("not_approved");
+    expect(status).toBe("not_approved");
     expect(payee.lastGrantOutcome).toBe("denied");
   });
 
@@ -121,10 +150,9 @@ describe("realApprovePayeeDeps.enablePerfloGrant — the async continuation that
     await makePendingPayee("enable-grant-test-4");
 
     realApprovePayeeDeps.enablePerfloGrant({ payeeId: "enable-grant-test-4", recipientNickname: "x", grant });
-    await flushMicrotasks();
 
-    const payee = await prisma.payee.findUniqueOrThrow({ where: { id: "enable-grant-test-4" } });
-    expect(payee.pendingGrantApprovalUrl).toBe("https://app.perflo.ai/approve?sid=enable-grant-test-4");
+    const url = await waitForApprovalUrl("enable-grant-test-4");
+    expect(url).toBe("https://app.perflo.ai/approve?sid=enable-grant-test-4");
 
     release();
     await flushMicrotasks();

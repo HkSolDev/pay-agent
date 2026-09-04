@@ -47,7 +47,25 @@ async function cleanupSender(addr: string) {
   }
 }
 
+// The one-pending-grant-at-a-time lock (payees_one_pending_grant_key) is a
+// genuinely global, table-wide invariant, not scoped to this file's own
+// senders — and this suite shares one real Postgres database with every
+// other test file in the repo. This file in particular exercises the real,
+// fire-and-forget enablePerfloGrant path (see the mock comment above), so a
+// test that finishes before its own microtask flushes can leave a stray row
+// in pending_grant that would otherwise block every "started"/"locked"
+// assertion in every other integration test file. Force-clear any such row
+// before each test here, matching payee-approval-deps.integration.test.ts
+// and reconcile-grant-approvals.test.ts.
+async function clearAnyStrayLock() {
+  await prisma.payee.updateMany({
+    where: { status: "pending_grant" },
+    data: { status: "not_approved", lastGrantOutcome: "expired", pendingGrantApprovalUrl: null },
+  });
+}
+
 async function cleanup() {
+  await clearAnyStrayLock();
   await cleanupSender(senderAddr);
   await cleanupSender(senderAddrTwo);
 }

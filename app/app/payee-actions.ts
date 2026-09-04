@@ -59,6 +59,9 @@ export async function createPayeeAction(formData: FormData): Promise<void> {
   if (result.status === "grant_in_progress") {
     throw new Error("An approval is already in progress for another payee. Try again once it's done.");
   }
+  if (result.status === "already_approved") {
+    throw new Error(`A payee with sender email ${input.senderAddr} already exists.`);
+  }
   revalidatePath("/payees");
 }
 
