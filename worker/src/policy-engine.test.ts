@@ -16,6 +16,7 @@ const safeInput = (): PolicyInput => ({
   duplicate: false,
   grant: { active: true, notExpired: true, perPaymentCapOk: true, remainingAmountOk: true, remainingCountOk: true },
   amountWithinOwnerCeiling: true,
+  amountAboveMinimum: true,
   paused: false,
 });
 
@@ -31,6 +32,7 @@ describe("Policy engine — FR-19 is an all-of gate", () => {
     ["verifier score below 80", (x: PolicyInput) => { x.verification.score = 79; }],
     ["grant cap exceeded", (x: PolicyInput) => { x.grant.perPaymentCapOk = false; }],
     ["owner ceiling exceeded", (x: PolicyInput) => { x.amountWithinOwnerCeiling = false; }],
+    ["amount below the fee-safety minimum — ₹50 must not auto-pay", (x: PolicyInput) => { x.amountAboveMinimum = false; }],
     ["global pause enabled", (x: PolicyInput) => { x.paused = true; }],
   ])("returns needs_approval when %s", (_name, mutate) => {
     const input = safeInput(); mutate(input);

@@ -60,6 +60,47 @@ real, expected behavior. What's not published anywhere is the actual ₹100
 figure — no fee schedule exists with real numbers, only "shown live at
 confirmation time." Discoverable only by actually trying a transfer.
 
+## Fee-safety floor added to auto-pay: AUTO_PAY_MIN_AMOUNT_INR
+
+Direct consequence of the ~₹100 flat-fee discovery above: nothing in the
+policy engine stopped `auto_pay` from firing on a small invoice that would
+mostly (or entirely) go to the fee, with no owner in the loop to notice
+before it happened — auto-pay's whole point is that no one reviews it first.
+
+Added `amountAboveMinimum` (`worker/src/auto-pay-eligibility.ts`) as a new
+guardrail in `decidePolicy` (`worker/src/policy-engine.ts`), wired into both
+the normal ingest path (`level1-pipeline.ts`) and the policy-only
+re-evaluation path (`reevaluate-policy.ts`) — the same two call sites as the
+existing `amountWithinOwnerCeiling`. Configured via
+`AUTO_PAY_MIN_AMOUNT_INR`, defaulting to **₹200** when unset.
+
+This is the mirror image of `AUTO_PAY_MAX_AMOUNT_INR`'s ceiling, but
+deliberately shaped differently in one respect: the ceiling defaults to "no
+extra restriction" when unset (an opt-in tightening), while this floor
+defaults to a real, non-zero value (₹200) when unset. Fee-safety is meant to
+be on by default, not something a deployment has to remember to configure.
+
+**Why ₹200, not ₹100 or ₹150:** the live-reproduced case that motivated this
+guard — a ₹200 payment that only delivered ₹99.20 net — is itself the
+boundary case the default is set to block, not merely amounts far below it.
+`amountAboveMinimum` requires the amount to be *strictly greater than* the
+floor (`amountInr > floor`), so a ₹200 invoice is blocked under the default,
+not allowed through at the edge. Below this floor, more than half the
+payment would go to the fee — not a reasonable trade to make automatically.
+An invalid or non-numeric `AUTO_PAY_MIN_AMOUNT_INR` falls back to the ₹200
+default rather than disabling the guard, matching the "fee-safety is a
+default" intent above.
+
+Manual "Confirm & pay" is not affected by this at all, same as the existing
+owner ceiling — an owner can still choose to pay a small amount by hand and
+accept the fee; this guard only stops it from happening *automatically* and
+unreviewed.
+
+Test-first: `worker/src/auto-pay-eligibility.test.ts` (the pure threshold
+function, including the exact ₹200 boundary case and an env override) and
+`worker/src/policy-engine.test.ts` (a ₹50 invoice must resolve to
+`needs_approval`, not `auto_pay`).
+
 ## First real Perflo payment call: response shape was also a guess, and was wrong
 
 4 Sep 2026: ran a real `beneficiary pay` against a deliberately-fake test

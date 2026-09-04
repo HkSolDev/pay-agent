@@ -8,7 +8,7 @@ import { prisma } from "@perflo-ap-agent/db";
 import { decidePolicy, applyCurrencyGuard, type PolicyDecision } from "./policy-engine";
 import { loadApprovedPayees } from "./payee-store";
 import { loadPayeeUsage } from "./payment-usage";
-import { computeGrantStatus, amountWithinOwnerCeiling } from "./auto-pay-eligibility";
+import { computeGrantStatus, amountWithinOwnerCeiling, amountAboveMinimum } from "./auto-pay-eligibility";
 import { reviewRetryBlockReason } from "./review-retry";
 import type { ApprovedPayee, ResolveResult } from "./payee-resolver";
 import type { PayeeUsage } from "./auto-pay-eligibility";
@@ -124,6 +124,7 @@ export async function reevaluatePolicy(emailId: string, deps: ReevaluatePolicyDe
     duplicate: duplicate.duplicate,
     grant,
     amountWithinOwnerCeiling: Number.isFinite(amountInr) ? amountWithinOwnerCeiling(amountInr) : false,
+    amountAboveMinimum: Number.isFinite(amountInr) ? amountAboveMinimum(amountInr) : false,
     paused: process.env.AUTO_PAY_MODE !== "on",
     payeeAutoPayEnabled: resolvedPayee?.grant.autoPayEnabled ?? false,
   });

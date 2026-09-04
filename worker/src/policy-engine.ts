@@ -24,6 +24,11 @@ export interface PolicyInput {
   duplicate: boolean;
   grant: { active: boolean; notExpired: boolean; perPaymentCapOk: boolean; remainingAmountOk: boolean; remainingCountOk: boolean };
   amountWithinOwnerCeiling: boolean;
+  // Fee-safety floor, the mirror of amountWithinOwnerCeiling: false means
+  // the amount is at or below AUTO_PAY_MIN_AMOUNT_INR, where Perflo's flat
+  // payout fee would eat most or all of the payment (confirmed live: a
+  // ₹200 payment delivered ₹99.20 net). See auto-pay-eligibility.ts.
+  amountAboveMinimum: boolean;
   paused: boolean;
   // Per-payee opt-in (worker/src/auto-pay-gate.ts's other half of the gate,
   // alongside the global AUTO_PAY_MODE switch this `paused` field already
@@ -93,6 +98,7 @@ export function decidePolicy(input: PolicyInput): { decision: PolicyDecision; re
   if (!grantOk) reasons.push("Grant is not active, is expired, or a cap would be exceeded.");
 
   if (!input.amountWithinOwnerCeiling) reasons.push("Amount exceeds the owner's auto-pay ceiling.");
+  if (!input.amountAboveMinimum) reasons.push("Amount is at or below the auto-pay fee-safety minimum.");
 
   if (input.paused) reasons.push(GLOBAL_PAUSE_REASON);
   if (input.payeeAutoPayEnabled === false) reasons.push(PAYEE_AUTOPAY_DISABLED_REASON);
