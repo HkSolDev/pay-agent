@@ -1,20 +1,38 @@
 # Perflo AP Agent — Hands-off Handoff
 
 Last verified: 2026-09-04 (Perflo connected via teammate KYC, first real payout, fee discovery & floor, real beneficiary registration wired)
-Branch: `main`.
+Branch: **not `main`** — two unmerged branches, **no PR opened yet**. Don't
+trust a stale "Branch:" line here without checking `git branch -a` and
+`git log --oneline` yourself first; this exact class of mistake (an
+out-of-date branch/PR-status claim causing cross-session confusion) has
+happened on this project before.
+
+- `codex/level1-edge-case-review` — base branch for today's work (CLI
+  rename fix, response-parsing fix, DECISIONS.md/EDGE_CASES.md, fee
+  discovery, fee-safety floor). Ahead of `origin/codex/level1-edge-case-review`.
+- `feat/perflo-beneficiary-approval` — branched off the above, has the real
+  beneficiary-registration wiring (commit `312effa`) plus this doc update
+  (`794f79d`). Pushed to `origin/feat/perflo-beneficiary-approval`.
+- **Neither branch has a PR open, and neither is merged into `main`.** A
+  "Create PR" UI action targeted `--base main`, which would bundle both
+  branches into one large PR since `codex/level1-edge-case-review` isn't in
+  `main` either — paused on that instead of creating it, pending the
+  owner's decision on the right PR base.
 
 ## Session summary — 2026-09-04 (Real Perflo connected, ~₹100 fee discovery, fee floor, real beneficiary registration)
 
-Five key commits landed:
+Six key commits landed (all on the two branches above, not on `main`):
 1. `370feb5` — Fixed Perflo pay response parsing: fields returned by `beneficiary pay` are top-level, not nested under `data`.
 2. `f6190be` & `cdfc204` — **First real Perflo payment succeeded end-to-end**: connected via teammate's (Abhinav) KYC account. Sent a real ₹200 bank transfer; confirmed `status: "success"` and verified in Perflo dashboard. **Discovered flat ~₹100 payout fee**: out of ₹200 sent, ₹99.20 arrived at bank. Cross-checked with Perflo docs: banking partner charges a fixed payout fee (~₹100).
 3. `1f18c76` — **Added fee-safety floor (`AUTO_PAY_MIN_AMOUNT_INR`)**: prevents auto-pay from firing on small invoices where fees eat the payout. Defaults to ₹200 (`amountInr > 200` required). Wired into `policy-engine.ts`, `auto-pay-eligibility.ts`, `level1-pipeline.ts`, and `reevaluate-policy.ts`.
-4. `312effa` — **Wired "Approve payee" to real Perflo beneficiary registration**: `payee-approval-deps.ts` now calls real Perflo CLI (`beneficiary add`) instead of generating fake local nicknames. Added `firstName`/`lastName` inputs and individual account purpose code. UPI rails are safely rejected with a clear error since the connected account has no UPI schema.
+4. `312effa` — **Wired "Approve payee" to real Perflo beneficiary registration**: `payee-approval-deps.ts` now calls real Perflo CLI (`beneficiary add`) instead of generating fake local nicknames. Added `firstName`/`lastName` inputs and individual account purpose code. UPI rails are safely rejected with a clear error since the connected account has no UPI schema. **Live-verified bug fix**: the first real `beneficiary add` call failed with `purpose_required` (missing `--purpose-code`, not caught by mocked unit tests) — fixed and re-verified live (`ok:true`) before this was committed.
 
 **Next steps for the new session:**
-1. Two-phase approval / `pending_grant` for Perflo browser grant approval (`enablePerfloGrant`).
-2. Test adding a payee via the UI, syncing an invoice, and paying out via the live Perflo CLI integration.
-3. Keep manual confirm-and-pay safe while testing with the teammate's account.
+1. Resolve the PR-base question above before opening any PR.
+2. Two-phase approval / `pending_grant` for Perflo browser grant approval (`enablePerfloGrant`) — slice 4.
+3. Slice 6: the real `policy enable` call. Confirmed live that it prints an approval URL to stdout and blocks (doesn't auto-open a browser) — the UI needs to capture and show that URL, not just hang.
+4. No Gmail inbox is connected to this project yet at all — connecting one (`pnpm connect-gmail`) and testing a real invoice email end-to-end through the app UI hasn't been done this session.
+5. Keep manual confirm-and-pay safe while testing with the teammate's account.
 
 ---
 
