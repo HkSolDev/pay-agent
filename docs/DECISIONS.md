@@ -50,6 +50,16 @@ per transfer, regardless of amount sent. Consequences for this project:
   account or is Perflo's standard production fee — worth asking directly
   rather than assuming either way.
 
+Cross-checked against Perflo's own docs (`concepts__fees-and-limits.md`,
+mirrored locally): payout fees are a documented, expected category —
+"Cards and payouts: any card processing or payout cost, itemized before you
+confirm | Card and banking partners" — set by Perflo's banking partner, not
+Perflo itself, and always shown before confirming (matches what the app's
+own quote screen showed). So this isn't a bug or a surprise fee; it's
+real, expected behavior. What's not published anywhere is the actual ₹100
+figure — no fee schedule exists with real numbers, only "shown live at
+confirmation time." Discoverable only by actually trying a transfer.
+
 ## First real Perflo payment call: response shape was also a guess, and was wrong
 
 4 Sep 2026: ran a real `beneficiary pay` against a deliberately-fake test
