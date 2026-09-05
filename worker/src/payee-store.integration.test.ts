@@ -3,6 +3,8 @@ import { prisma } from "@perflo-ap-agent/db";
 import { encryptPaymentMethod, hashPaymentMethod, normalizePaymentMethod } from "./payee-crypto.js";
 import { loadApprovedPayees } from "./payee-store.js";
 
+const savedEncryptionKey = process.env.PAYEE_ENCRYPTION_KEY;
+const savedHashKey = process.env.PAYEE_HASH_KEY;
 const encryptionKey = "c".repeat(64);
 const hashKey = "d".repeat(64);
 const ids = ["test-payee-store-1", "test-payee-store-2"];
@@ -29,6 +31,10 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await cleanup();
+  if (savedEncryptionKey === undefined) delete process.env.PAYEE_ENCRYPTION_KEY;
+  else process.env.PAYEE_ENCRYPTION_KEY = savedEncryptionKey;
+  if (savedHashKey === undefined) delete process.env.PAYEE_HASH_KEY;
+  else process.env.PAYEE_HASH_KEY = savedHashKey;
 });
 
 describe("Payee store — real Postgres encrypted-rail integration", () => {

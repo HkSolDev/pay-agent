@@ -3,6 +3,8 @@ import { prisma } from "@perflo-ap-agent/db";
 import { encryptPaymentMethod, hashPaymentMethod, normalizePaymentMethod } from "./payee-crypto.js";
 import { replacePaymentRail, revokePaymentRail } from "./payee-rail-lifecycle.js";
 
+const savedEncryptionKey = process.env.PAYEE_ENCRYPTION_KEY;
+const savedHashKey = process.env.PAYEE_HASH_KEY;
 const encryptionKey = "c".repeat(64);
 const hashKey = "d".repeat(64);
 const payeeId = "test-rail-lifecycle-1";
@@ -39,6 +41,10 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await cleanup();
+  if (savedEncryptionKey === undefined) delete process.env.PAYEE_ENCRYPTION_KEY;
+  else process.env.PAYEE_ENCRYPTION_KEY = savedEncryptionKey;
+  if (savedHashKey === undefined) delete process.env.PAYEE_HASH_KEY;
+  else process.env.PAYEE_HASH_KEY = savedHashKey;
 });
 
 describe("Payee rail lifecycle — replace and revoke, real Postgres", () => {

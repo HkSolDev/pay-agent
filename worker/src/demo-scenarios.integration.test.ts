@@ -3,6 +3,8 @@ import { prisma } from "@perflo-ap-agent/db";
 import { resetDemoInbox, seedDemoInbox } from "./demo-inbox.js";
 import { resetDemoPayees, seedDemoPayees } from "./demo-payees.js";
 
+const savedEncryptionKey = process.env.PAYEE_ENCRYPTION_KEY;
+const savedHashKey = process.env.PAYEE_HASH_KEY;
 const encryptionKey = "c".repeat(64);
 const hashKey = "d".repeat(64);
 
@@ -21,6 +23,10 @@ beforeEach(async () => {
 afterAll(async () => {
   await resetDemoInbox();
   await resetDemoPayees();
+  if (savedEncryptionKey === undefined) delete process.env.PAYEE_ENCRYPTION_KEY;
+  else process.env.PAYEE_ENCRYPTION_KEY = savedEncryptionKey;
+  if (savedHashKey === undefined) delete process.env.PAYEE_HASH_KEY;
+  else process.env.PAYEE_HASH_KEY = savedHashKey;
 });
 
 describe("demo payees + demo inbox — the seeded scenarios actually resolve against approved payees", () => {
