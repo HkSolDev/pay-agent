@@ -26,7 +26,7 @@ export async function preparePayment(formData: FormData) {
     select: { id: true, resolvedPayeeId: true, extractionSummary: true },
   });
   if (!email?.resolvedPayeeId) {
-    throw new Error("The email to pay no longer exists.");
+    throw new Error("This invoice's payee hasn't been approved yet — approve the payee in /payees first.");
   }
   const payee = await prisma.payee.findUnique({ where: { id: email.resolvedPayeeId }, select: { recipientNickname: true } });
   if (!payee) throw new Error("The resolved payee no longer exists.");

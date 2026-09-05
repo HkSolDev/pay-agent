@@ -84,6 +84,7 @@ export function QueueView({
         !isPaid &&
         !isQuarantine &&
         !hasPaymentAttempt(item.intent?.status) &&
+        item.email.reviewStatus !== "rejected" &&
         (item.email.policyDecision === "needs_approval" ||
           item.email.reviewStatus === "needs_approval" ||
           (item.email.classification !== "ignored" && item.email.policyDecision !== "ignore"));
@@ -104,6 +105,7 @@ export function QueueView({
         !isPaid &&
         !isQuarantine &&
         !hasPaymentAttempt(item.intent?.status) &&
+        item.email.reviewStatus !== "rejected" &&
         (item.email.policyDecision === "needs_approval" ||
           item.email.reviewStatus === "needs_approval" ||
           (item.email.classification !== "ignored" && item.email.policyDecision !== "ignore"));
@@ -281,6 +283,7 @@ export function QueueView({
             const isNeedsApproval =
               !isQuarantine &&
               !hasPaymentAttempt(intent?.status) &&
+              email.reviewStatus !== "rejected" &&
               (email.policyDecision === "needs_approval" ||
                 email.reviewStatus === "needs_approval" ||
                 (email.classification !== "ignored" && email.policyDecision !== "ignore"));
@@ -323,6 +326,9 @@ export function QueueView({
                     <div>
                       {isQuarantine && (
                         <span className="tag tag-dark">quarantine</span>
+                      )}
+                      {email.reviewStatus === "rejected" && (
+                        <span className="tag tag-neutral">rejected</span>
                       )}
                       {isNeedsApproval && !isQuarantine && (
                         <span className="tag tag-accent">needs approval</span>
