@@ -138,9 +138,12 @@ export function PaymentCell({
     case "failed":
       return (
         <div className="payment-failed-wrap">
-          <div className="payment-status-pill pill-failed">
+          <div
+            className="payment-status-pill pill-failed"
+            title={intent.lastError ?? undefined}
+          >
             <span className="dot-failed" />
-            <span>Failed {intent.lastError ? `(${intent.lastError})` : ""}</span>
+            <span>Failed</span>
           </div>
           <form action={confirmPayment.bind(null, emailId)}>
             <button type="submit" className="button-retry">
@@ -151,19 +154,18 @@ export function PaymentCell({
       );
 
     case "unknown_outcome": {
-      // RazorpayX itself hasn't said pass or fail yet — "processing"/"queued"
+      // The payment provider hasn't confirmed pass or fail yet — "processing"/"queued"
       // means it's still genuinely working on it (in live mode this resolves
-      // on its own; RazorpayX's test mode requires a manual dashboard step
-      // to advance it, so it can sit here indefinitely — see their Test Mode
-      // docs). That's expected, not a fault, so it gets calmer copy than an
-      // actual API error would. Either way we still never show "Paid" until
-      // RazorpayX itself confirms it (FR-27) — this only changes the words,
-      // never the claimed outcome.
+      // on its own; in test environments it may require a manual step
+      // to advance it, so it can sit here indefinitely). That's expected, not a fault,
+      // so it gets calmer copy than an actual API error would. Either way we still never
+      // show "Paid" until the payment provider itself confirms it (FR-27) — this only
+      // changes the words, never the claimed outcome.
       const stillInFlight = /processing|queued/i.test(intent.lastError ?? "");
       return (
         <div
           className={`payment-status-pill ${stillInFlight ? "pill-inflight" : "pill-uncertain"}`}
-          title="FR-27: never automatically retried — RazorpayX hasn't confirmed the outcome yet"
+          title="FR-27: never automatically retried — the payment provider hasn't confirmed the outcome yet"
         >
           {stillInFlight ? (
             <>
@@ -171,7 +173,7 @@ export function PaymentCell({
               <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" />
               </svg>
-              <span>Still processing at RazorpayX — no action needed yet</span>
+              <span>Still processing — no action needed yet</span>
             </>
           ) : (
             <>
