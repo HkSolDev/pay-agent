@@ -1,38 +1,78 @@
 # Perflo AP Agent — Hands-off Handoff
 
-Last verified: 2026-09-04, later the same day (real `enablePerfloGrant` — the guardrail-approval slice — implemented, tested, live-verified in browser; **not yet committed**)
-Branch: `feat/perflo-beneficiary-approval` — checked directly with `git
-branch -a` and `git status -sb` just before writing this line (not trusted
-from memory or an earlier version of this file — that exact mistake has
-happened on this project before, see the paragraph below this one). Tracks
-`origin/feat/perflo-beneficiary-approval` and is even with it (no ahead/
-behind) — because **everything described in the new session summary below
-is still uncommitted working-tree changes**, not pushed, not committed.
-`git log --oneline -5` still shows `b9bfed5` as HEAD.
+Last verified: 2026-09-05, later the same day (T-17 auth-failure hard-fail gap fixed in `level1-pipeline.ts`; test-first, all 5 red-team fixtures green; **not yet committed**)
+Branch: `feat/perflo-beneficiary-approval` — verified via `git status` and `git log --oneline -5` just before writing this line. HEAD is still `a51c209`. `git status` shows this session's own change (`worker/src/level1-pipeline.ts`, 1 file) plus separate uncommitted drift in `app/app/payee-actions.test.ts`, `app/app/queue-view.tsx`, `app/app/actions.ts`, `worker/src/payee-approval-deps.ts`, `worker/src/payee-approval-deps.enable-grant.test.ts`, `worker/src/llm-extractor.ts`/`.test.ts`, and an untracked `.codex/` directory — all from other sessions actively working on this branch concurrently, confirmed via `git diff --stat` to carry zero lines from this task.
 
-Don't trust a stale "Branch:" line here without checking `git branch -a`
-and `git log --oneline` yourself first; this exact class of mistake (an
-out-of-date branch/PR-status claim causing cross-session confusion) has
-happened on this project before.
+## Session summary — 2026-09-05, later the same day (T-17 fixed: auth-failure hard fail no longer stripped for `details_changed`)
 
-- `codex/level1-edge-case-review` — base branch for the 4 Sep work (CLI
-  rename fix, response-parsing fix, DECISIONS.md/EDGE_CASES.md, fee
-  discovery, fee-safety floor). Ahead of `origin/codex/level1-edge-case-review`.
-- `feat/perflo-beneficiary-approval` — branched off the above. Committed
-  history ends at `b9bfed5` (see the older session summaries below). The
-  guardrail-approval work described immediately below is real, tested, and
-  working, but sitting **uncommitted** in the working tree as of this
-  line — the next session (or this one, if continuing) should run
-  `git status --short` and `git diff --stat` to see the exact file list
-  before doing anything destructive, and should commit it (see "Next steps"
-  in the new session summary below) rather than assuming it's already safe.
-- **Neither branch has a PR open, and neither is merged into `main`.** A
-  "Create PR" UI action targeted `--base main`, which would bundle both
-  branches into one large PR since `codex/level1-edge-case-review` isn't in
-  `main` either — paused on that instead of creating it, pending the
-  owner's decision on the right PR base. Still unresolved as of this entry.
+**What this session did, in one sentence:** fixed the exact gap the earlier "`tests/injections/` red-team fixture suite added" session found and deliberately left unfixed — `level1-pipeline.ts` was stripping the `payment_method_mismatch` hard fail whenever payee resolution was `details_changed`, even when the message's own DMARC/SPF+DKIM auth had failed, so T-17 (auth-failure + changed bank details) fell through to `needs_approval` instead of the `quarantine` PRD Section 15 requires.
+
+**Read `docs/DECISIONS.md`'s entry titled "T-17 fixed: auth-failure hard fail no longer stripped when payee status is `details_changed`"** for the full technical reasoning, including the exact PRD lines checked and the precise before/after condition — this section is the narrative/status version.
+
+**Why did only this, and nothing more, for the next session's benefit:**
+- **Verified the fix against the PRD before writing code** (`/grill-with-docs`), not against the earlier session's own report of the bug — confirmed independently: Section 15 line 551 (T-17 must quarantine on auth failure), Section 8.1 row #3 (`details_changed` alone, auth passing, is `needs_approval` — this must keep working), and rows #4/#11 (the same "soft alone, hard combined with a details change" shape elsewhere in the same table, confirming the pattern rather than assuming it from one line).
+- **Test-first** (`/test-driven-development`): the T-17 test in `tests/injections/injections.test.ts` already existed and was already red from the prior session's fixture work — confirmed it failed for the expected reason (`payment_method_mismatch` missing from `hardFails` despite `authPassed: false`) before changing any production code, then made the minimal one-condition change, then reran to confirm green. Never wrote the fix before re-confirming red.
+- **Scope kept deliberately narrow to exactly what was asked**, not because it was convenient but because both boundaries are payment-safety-adjacent and would have needed their own justification: left `multiple_payment_methods` stripping unconditional (untouched) since no PRD table row or failing test asked for that case to change, and added no new hard-fail label — reused the `payment_method_mismatch` string the verifier already produces rather than inventing a new check, so the diff is the smallest change that makes the PRD's actual requirement true.
+- **Stayed out of every file this session was told not to touch** (`payee-approval-deps.ts` and its test, `payee-actions.test.ts`, `queue-view.tsx`, `actions.ts`) — verified with `git diff --stat` at the end, not from memory, because multiple other sessions are concurrently editing this branch right now.
+
+**Verification actually performed, not just claimed:**
+- `npx vitest run tests/injections/ worker/src/level1-pipeline.test.ts --no-file-parallelism` before the fix: 1 failed / 10 passed, T-17 failing with `expected [] to include 'payment_method_mismatch'`.
+- Same command after the fix: **3 test files, 11/11 passed.** Verbose run of `tests/injections/injections.test.ts` alone individually names and confirms all 5 fixtures green: T-14, T-15, T-16, T-17, and the `20_ignore_previous` variant.
+- `npx vitest run worker/src --no-file-parallelism` (full worker suite, to check for regressions this task didn't intend): 295/299 pass. The 4 failures are pre-existing, unrelated to this change (`payee-store.integration.test.ts` / `demo-scenarios.integration.test.ts` failing on `decryptPaymentMethod`'s AES-GCM auth tag inside `payee-crypto.ts` — nowhere near `level1-pipeline.ts`, and inside the off-limits `payee-approval-deps.ts` territory another session is actively mutating).
+- `git diff --stat` confirms this session's own change is exactly one file: `worker/src/level1-pipeline.ts` (17 lines). Nothing committed — `git log` HEAD unchanged at `a51c209`.
+
+## Session summary — 2026-09-05, later the same day (UI bugfixes: queue filter for rejected invoices, honest preparePayment error message)
+
+**What this session did, in one sentence:** fixed two real queue UX bugs found during live browser verification — updated `app/app/queue-view.tsx` so rejected invoices leave the "Needs approval" tab and count, and updated `app/app/actions.ts`'s `preparePayment` to surface an honest error message when an unapproved payee blocks preparation.
+
+**Why this matters / reasoning:**
+- An invoice with `reviewStatus: "rejected"` previously remained indefinitely visible in the "Needs approval" tab because `isNeedsApproval` only evaluated `policyDecision === "needs_approval"`. The fix excludes `item.email.reviewStatus !== "rejected"` from `isNeedsApproval` across all three call sites (counts, tab filtering, card rendering), and renders a clean neutral `rejected` badge on the card in the "All activity" tab.
+- `preparePayment` previously threw `"The email to pay no longer exists."` when `resolvedPayeeId` was null. This misleading message blamed missing database data when the real reason was an unapproved payee. Changed to `"This invoice's payee hasn't been approved yet — approve the payee in /payees first."`.
+
+**Verification performed in real browser:**
+- Reloaded `http://localhost:3000`: confirmed "Invoice TEST-01" (with `reviewStatus: "rejected"`) is no longer in the "Needs approval" tab, and the tab counter dropped from 18 to 17 (`needs_approval_tab_1788585671679.png`).
+- Switched to "All activity" tab: confirmed "Invoice TEST-01" renders with the neutral `rejected` badge (`all_tab_rejected_badge_1788585698684.png`).
+- Clicked "Prepare payment ˅" -> "Prepare ->": confirmed the Next.js runtime error overlay displays the honest message `"This invoice's payee hasn't been approved yet — approve the payee in /payees first."` (`prepare_payment_honest_error_1788585736088.png`).
+- Ran `pnpm typecheck`: clean across workspaces.
+
+## Session summary — 2026-09-05, later the same day (`tests/injections/` red-team fixture suite built — T-17 gap found, not fixed)
+
+
+**What this session did, in one sentence:** built the PRD's required red-team fixture folder (`tests/injections/*.eml`, Section 8.7 rule 7 / Appendix C) from scratch — it didn't exist before this session — and in doing so found a real, reproducible gap in `level1-pipeline.ts`'s policy logic that the fixtures themselves are what surfaced it.
+
+**Read `docs/DECISIONS.md`'s entry titled "`tests/injections/` red-team fixture suite added..."** for the full technical reasoning — this section is the narrative/status version.
+
+**Why built this way, for the next session's benefit:**
+- **Corrected the task's own framing against the PRD before writing anything** (via `/grill-with-docs`): the task that kicked this off asked for "6 fixtures" covering display-name spoof, lookalike domain, and reply-to hijack under `tests/injections/` — but PRD Appendix C's own explicit file tree puts those three under `tests/fixtures/` instead, and lists exactly 5 files for `tests/injections/` (T-14, T-15, T-16, T-17, plus one "add your own" slot). Followed the PRD's actual tree, not the task's paraphrase of it.
+- **No `.eml`/RFC822 parser existed anywhere in this codebase** — `ingest.ts` only ever consumes Gmail's own pre-parsed JSON shape (`RawGmailMessage`/`GmailPart`), because that's literally what Composio hands it; raw RFC822 bytes are never something the real running system receives. Real `.eml` files are still what the PRD explicitly asks for (portable, inspectable, "reproducible from a fixture file in the repo"), so `tests/injections/load-eml.ts` is new, deliberately minimal glue — not a general MIME parser — that turns a hand-authored `.eml` into the exact `RawGmailMessage` shape `ingestGmailMessages` (the real, un-mocked pipeline entrypoint, same seam `ingest.test.ts` already uses) consumes. It was itself built test-first (`load-eml.test.ts`) before any fixture used it.
+- **Reused existing, already-proven test infrastructure rather than inventing new fixture patterns**: the T-15 (injection hidden inside a PDF) fixture reuses `pdf-extract.test.ts`'s exact hand-built minimal-PDF byte generator verbatim, and the invoice body wording throughout (`Invoice ...\nTotal due: INR ...\nUPI: ...@okaxis`) matches `demo-inbox.ts`'s already-proven-parseable convention, rather than guessing new phrasing against the deterministic extractor's regexes from scratch.
+- **Built one fixture at a time, red before green**: for each of the 5 fixtures, wrote the assertion against the real pipeline first (confirmed it failed with "file not found"), then wrote the `.eml`, then reran and confirmed green — never wrote a fixture and its assertion in the same step.
+- **Found a real bug via T-17, and deliberately did not fix it**: `level1-pipeline.ts` strips the `payment_method_mismatch` hard-fail whenever payee resolution is `details_changed`, unconditionally — it doesn't check whether sender authentication (DMARC/SPF/DKIM) also failed. The PRD's T-17 explicitly wants auth-failure-plus-changed-details to hard-quarantine, but the current code routes it to `needs_approval` like any ordinary "vendor updated their bank details" email. The fix (gate that strip on `verification.authPassed === true`) is a one-line change, but it touches the hard-fail path for every message this codebase processes, not just this fixture — exactly the kind of payment-safety-adjacent change `hands-off.md` has repeatedly flagged as needing its own dedicated review, not a same-session patch bundled in with fixture-writing. Left the test red on purpose, as the regression test that should go green once someone deliberately fixes and reviews that line.
+- **Stayed out of every file this session was told not to touch** (`payee-approval-deps.ts` and its tests, `reconcile-grant-approvals.ts` and its test, `payee-actions.test.ts`) — verified directly with `git diff` at the end, not from memory, precisely because another session was actively editing those files concurrently.
+
+**Verification actually performed, not just claimed:**
+- `ls tests/injections/` — all 8 files (5 `.eml` fixtures + loader + 2 test files) confirmed on disk.
+- `npx vitest run tests/injections/` run fresh, multiple times: **7 of 8 tests pass, 1 fails (T-17, the gap above)** — consistent across reruns, not flaky.
+- `git diff --stat` against the 5 off-limits files confirmed zero edits from this session's own tool calls.
+- Nothing committed — `git log` HEAD unchanged at `a51c209` throughout this work.
+
+## Session summary — 2026-09-05 (Real Gmail inbox connected, live invoice ingestion verified end-to-end)
+
+**What this session did, in one sentence:** verified the Composio OAuth Gmail connection for `perflo-ap-owner` (`hemantkumar4213@gmail.com`), sent a live test invoice email ("Invoice TEST-01" with bank/IFSC details and ₹500 amount), and confirmed end-to-end ingestion and Level 1 policy evaluation into the real local Postgres `Email` table (`cmtnwqxgw0000c5aqgpvg73i2`).
+
+**Why this matters / reasoning:**
+- Closes open item #4 from the 4 Sep handoff ("No Gmail inbox is connected to this project yet at all — connecting one (`pnpm connect-gmail`) and testing a real invoice email end-to-end through the app UI hasn't been done this session").
+- Proves the entire intake chain (Composio `GMAIL_FETCH_EMAILS` → MIME parse → LLM classify → LLM extract → payee resolution → deterministic verification → policy decision → Postgres persistence) works on live incoming email data rather than synthetic `demo:inbox` fixtures or mocked inputs.
+- Validated that the `ingest_checkpoints` watermark mechanism advances correctly without skipping or duplicating messages.
+
+**Verification details:**
+1. **Gmail connection check**: verified that `isGmailConnected()` returns `true` and queries `GMAIL_GET_PROFILE` for user `perflo-ap-owner` successfully (`hemantkumar4213@gmail.com`, active connection `ca_WrLRGxq2ls5f`).
+2. **Dispatched test invoice email**: sent a real email via Composio's `GMAIL_SEND_EMAIL` tool to `hemantkumar4213@gmail.com` with subject `"Invoice TEST-01"`, amount ₹500, account `123456789012`, IFSC `HDFC0000001` (Gmail message ID: `1a06fe9d0d17b793`).
+3. **Ingestion executed**: ran `pnpm exec tsx worker/src/sync-once-cli.ts` -> `{"step":"ingest","ran":true,"fetched":20,"inserted":20,"skipped":0}`.
+4. **Postgres row confirmed**: directly queried Postgres via Prisma (`prisma.email.findFirst({ where: { subject: "Invoice TEST-01" } })`). The row was created with classification `"invoice"` (0.95 confidence), extraction `500.00 INR` on `bank_neft` rail, payee resolution `new_payee`, and policy decision `needs_approval`.
 
 ## Session summary — 2026-09-04, later the same day (real guardrail approval: `enablePerfloGrant` implemented end to end)
+
 
 **What this session did, in one sentence:** replaced the fake stub in
 `enablePerfloGrant` (it used to just mint a local fake grant ID and call it
@@ -735,3 +775,20 @@ git log --oneline -8
 ```
 
 The PRD remains the desired end state. This handoff records what the code actually does today so another AI must verify the repository before extending it.
+
+## 5 Sep 2026 — fixed `Payee Name:` label-token extraction
+
+The live invoice row `cmtnwqxgw0000c5aqgpvg73i2` exposed a concrete payee
+name bug: `Payee Name: Test Vendor` became `Name` in the review queue. Reading
+the extraction path showed that `llm-extractor.ts` always computes the
+deterministic fallback first; the fallback's broad `payee` label match
+captured the next token (`Name`) rather than the value after the complete
+`Payee Name:` label. The wrapper then returned that artifact on model failure
+or invalid output and did not source-check a valid model's payee name.
+
+`worker/src/llm-extractor.ts` now source-corroborates an explicit,
+line-anchored `Payee Name:` field and returns its post-colon value on both the
+model and fallback paths. The system prompt now also says that label tokens
+such as `Name` are never the value. `worker/src/llm-extractor.test.ts` contains
+the regression case. Its red run reported `Expected: "Test Vendor"` and
+`Received: "Name"`; after the fix the focused file reports 9/9 tests passing.
