@@ -112,6 +112,43 @@ describe("review drawer model", () => {
     const hostile = '<img src="https://tracker.example/pixel" onerror="pay()"> <a href="https://evil.example">Pay</a>';
     expect(safeEmailBody(hostile)).toBe(hostile);
   });
+
+  it("populates viewUrl and isPdf for PDF attachments with an attachmentId, and leaves undefined for non-PDFs or missing attachmentId", () => {
+    const model = buildReviewDrawerModel(email({
+      id: "email-xyz",
+      attachments: [
+        { filename: "invoice.pdf", mimeType: "application/pdf", size: 2048, attachmentId: "att-1" },
+        { filename: "statement.PDF", mimeType: "application/octet-stream", size: 1024, attachmentId: "att-2" },
+        { filename: "sheet.xlsx", mimeType: "application/vnd.ms-excel", size: 4096, attachmentId: "att-3" },
+        { filename: "orphaned.pdf", mimeType: "application/pdf", size: 512 },
+      ],
+    }));
+
+    expect(model.attachments).toHaveLength(4);
+    expect(model.attachments[0]).toMatchObject({
+      name: "invoice.pdf",
+      isPdf: true,
+      attachmentId: "att-1",
+      viewUrl: "/api/attachment?emailId=email-xyz&attachmentId=att-1",
+    });
+    expect(model.attachments[1]).toMatchObject({
+      name: "statement.PDF",
+      isPdf: true,
+      attachmentId: "att-2",
+      viewUrl: "/api/attachment?emailId=email-xyz&attachmentId=att-2",
+    });
+    expect(model.attachments[2]).toMatchObject({
+      name: "sheet.xlsx",
+      isPdf: false,
+      attachmentId: "att-3",
+      viewUrl: undefined,
+    });
+    expect(model.attachments[3]).toMatchObject({
+      name: "orphaned.pdf",
+      isPdf: true,
+      viewUrl: undefined,
+    });
+  });
 });
 
 describe("requested review demo cases", () => {

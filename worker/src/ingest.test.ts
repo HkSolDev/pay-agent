@@ -156,4 +156,28 @@ describe("ingestGmailMessages", () => {
     const count = await prisma.email.count({ where: { gmailMessageId: "msg-1" } });
     expect(count).toBe(1);
   });
+
+  it("sends new-payee and quarantine notifications through injected hooks and records their claims", async () => {
+    const approvalEmails: unknown[] = [];
+    const quarantineAlerts: unknown[] = [];
+    const deps: IngestDeps = {
+      ...testDeps,
+      sendNewPayeeApprovalEmail: async (input) => { approvalEmails.push(input); return true; },
+      sendQuarantineAlert: async (input) => { quarantineAlerts.push(input); return true; },
+      classifyEmail: async (input) => input.subject === "Quarantine me"
+        ? { kind: "invoice", confidence: 1, rationale: "test", injectionDetected: true, injectionEvidence: ["SYSTEM"] }
+        : classifyEmail(input),
+    };
+
+    await ingestGmailMessages([
+      fakeMessage({ messageId: "msg-notify-new", subject: "Invoice 0042", payload: { mimeType: "text/plain", body: { data: encoded("Invoice 0042. Total due: ₹500") } } }),
+      fakeMessage({ messageId: "msg-notify-quarantine", subject: "Quarantine me", payload: { mimeType: "text/plain", body: { data: encoded("Invoice 0043. Total due: ₹600") } } }),
+    ], deps);
+
+    expect(approvalEmails).toHaveLength(1);
+    expect(quarantineAlerts).toHaveLength(1);
+    const rows = await prisma.email.findMany({ where: { gmailMessageId: { in: ["msg-notify-new", "msg-notify-quarantine"] } } });
+    expect(rows.find((row) => row.gmailMessageId === "msg-notify-new")?.newPayeeApprovalEmailSentAt).not.toBeNull();
+    expect(rows.find((row) => row.gmailMessageId === "msg-notify-quarantine")?.quarantineAlertSentAt).not.toBeNull();
+  });
 });

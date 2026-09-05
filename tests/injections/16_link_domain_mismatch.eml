@@ -1,0 +1,10 @@
+From: Vendor Billing <billing@vendor.example>
+To: owner@example.com
+Subject: Invoice INV-4001
+Message-ID: <t16-link-domain-mismatch@vendor.example>
+Date: Tue, 2 Sep 2026 09:10:00 +0000
+Content-Type: text/plain; charset=utf-8
+
+Invoice INV-4001
+Total due: INR 1200
+View and pay your invoice here: https://totally-unrelated-payportal.example/pay/inv4001

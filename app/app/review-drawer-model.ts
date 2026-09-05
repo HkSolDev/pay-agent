@@ -5,6 +5,7 @@ export interface ReviewAttachment {
   mimeType: string;
   size: number;
   extractionStatus?: string;
+  attachmentId?: string;
 }
 
 export interface ReviewEmail {
@@ -73,7 +74,15 @@ export interface ReviewDrawerModel {
     body: string;
   };
   fields: ReviewField[];
-  attachments: Array<{ name: string; type: string; size: string; status: string }>;
+  attachments: Array<{
+    name: string;
+    type: string;
+    size: string;
+    status: string;
+    attachmentId?: string;
+    isPdf: boolean;
+    viewUrl?: string;
+  }>;
   verification: ReviewEvidence[];
   duplicate: { status: string; detail: string; originalEmailId: string | null };
   policy: { decision: string; reasons: string[] };
@@ -199,12 +208,25 @@ export function buildReviewDrawerModel(email: ReviewEmail, intent?: ReviewIntent
     { label: "Payment rail", value: paymentKinds.length ? paymentKinds.map(railLabel).join(" + ") : "Not found", confidence: formatConfidence(extraction.paymentMethodConfidence) },
   ];
 
-  const attachments = asRecords(email.attachments).map((attachment) => ({
-    name: asString(attachment.filename) ?? "Unnamed attachment",
-    type: asString(attachment.mimeType) ?? "Unknown type",
-    size: formatSize(attachment.size),
-    status: attachmentStatus(attachment, email.bodyText),
-  }));
+  const attachments = asRecords(email.attachments).map((attachment) => {
+    const filename = asString(attachment.filename) ?? "Unnamed attachment";
+    const mimeType = asString(attachment.mimeType) ?? "Unknown type";
+    const attachmentId = asString(attachment.attachmentId);
+    const isPdf = mimeType === "application/pdf" || filename.toLowerCase().endsWith(".pdf");
+    const viewUrl = isPdf && attachmentId && email.id
+      ? `/api/attachment?emailId=${encodeURIComponent(email.id)}&attachmentId=${encodeURIComponent(attachmentId)}`
+      : undefined;
+
+    return {
+      name: filename,
+      type: mimeType,
+      size: formatSize(attachment.size),
+      status: attachmentStatus(attachment, email.bodyText),
+      attachmentId: attachmentId ?? undefined,
+      isPdf,
+      viewUrl,
+    };
+  });
 
   const verificationEvidence: ReviewEvidence[] = [
     {

@@ -18,6 +18,11 @@ export interface PaymentExecutionResult {
  * never quietly diverge on what counts as paid/failed/unknown (FR-27).
  */
 export async function executePreparedPayment(emailId: string): Promise<PaymentExecutionResult> {
+  // Set the moment requestManualPayment resolves, before the status write
+  // below is even attempted — so if THAT write throws, the catch block
+  // below can tell "the payment already landed, only our own record of it
+  // failed" apart from "the payment itself never happened."
+  let paidReference: string | undefined;
   try {
     const result = await requestManualPayment(
       { emailId, confirmedByOwner: true },
@@ -36,6 +41,7 @@ export async function executePreparedPayment(emailId: string): Promise<PaymentEx
           payViaConfiguredExecutor({ nickname, amount, currency: currency === "USD" ? "USD" : "INR", idempotencyKey }),
       },
     );
+    paidReference = result.paymentReference;
 
     await prisma.paymentIntent.update({
       where: { emailId },
@@ -48,11 +54,18 @@ export async function executePreparedPayment(emailId: string): Promise<PaymentEx
     // provider before we lost the ability to confirm it. That case goes to
     // unknown_outcome and is never offered a retry button; only a clean,
     // provider-reported failure (or anything else clearly pre-payment like
-    // a missing recipient/amount) is safe to mark "failed".
-    const status = err instanceof PaymentUnknownOutcomeError ? "unknown_outcome" : "failed";
+    // a missing recipient/amount) is safe to mark "failed". The same rule
+    // applies, regardless of this error's own type, once `paidReference` is
+    // set: that means requestManualPayment already resolved and money
+    // already moved — the only thing that failed here is recording it (e.g.
+    // a transient Postgres error on the "paid" write), which is exactly the
+    // "can't confirm what happened, never auto-retry" case, not a clean
+    // failure safe to offer a retry for.
+    const status = paidReference !== undefined || err instanceof PaymentUnknownOutcomeError ? "unknown_outcome" : "failed";
     const lastError = err instanceof Error ? err.message : String(err);
     const providerReference =
-      err instanceof PaymentUnknownOutcomeError || err instanceof PaymentDefiniteFailure ? err.providerReference : undefined;
+      paidReference ??
+      (err instanceof PaymentUnknownOutcomeError || err instanceof PaymentDefiniteFailure ? err.providerReference : undefined);
     const updated = await prisma.paymentIntent.updateMany({
       where: { emailId, status: "claimed" },
       data: { status, lastError, ...(providerReference ? { paymentReference: providerReference } : {}) },

@@ -24,11 +24,22 @@ vi.mock("../../worker/src/perflo-cli", () => ({
 }));
 
 // enablePerfloGrant is deliberately fire-and-forget (see payee-approval.ts)
-// — createPayeeAction returns before its promise chain settles. Tests that
-// need to observe the eventual applyGrantOutcome write flush the microtask
-// queue once, matching how a mocked-resolved promise actually resolves.
-function flushMicrotasks(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
+// — createPayeeAction returns before its promise chain settles, and that
+// continuation ends in a real, unawaited Postgres write. A single
+// setTimeout(0) tick only flushes microtasks, not the real network
+// round-trip a Postgres write needs — it isn't a reliable way to wait for
+// that write to land. Every test that calls createPayeeAction (not just the
+// one that asserts on the outcome) must wait for the row to leave
+// pending_grant before moving on, or its dangling write can land during a
+// later test here or in another file that shares this same lock-checking
+// invariant.
+async function waitUntilGrantSettled(payeeId: string, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const payee = await prisma.payee.findUniqueOrThrow({ where: { id: payeeId } });
+    if (payee.status !== "pending_grant" || Date.now() >= deadline) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 const { createPayeeAction, replaceRailAction, revokeRailAction } = await import("./payee-actions");
@@ -47,7 +58,25 @@ async function cleanupSender(addr: string) {
   }
 }
 
+// The one-pending-grant-at-a-time lock (payees_one_pending_grant_key) is a
+// genuinely global, table-wide invariant, not scoped to this file's own
+// senders — and this suite shares one real Postgres database with every
+// other test file in the repo. This file in particular exercises the real,
+// fire-and-forget enablePerfloGrant path (see the mock comment above), so a
+// test that finishes before its own microtask flushes can leave a stray row
+// in pending_grant that would otherwise block every "started"/"locked"
+// assertion in every other integration test file. Force-clear any such row
+// before each test here, matching payee-approval-deps.integration.test.ts
+// and reconcile-grant-approvals.test.ts.
+async function clearAnyStrayLock() {
+  await prisma.payee.updateMany({
+    where: { status: "pending_grant" },
+    data: { status: "not_approved", lastGrantOutcome: "expired", pendingGrantApprovalUrl: null },
+  });
+}
+
 async function cleanup() {
+  await clearAnyStrayLock();
   await cleanupSender(senderAddr);
   await cleanupSender(senderAddrTwo);
 }
@@ -107,9 +136,9 @@ describe("createPayeeAction — never touches payment execution", () => {
   // its fire-and-forget continuation runs.
   it("creates the payee, and it eventually resolves to approved once the (mocked) CLI call settles", async () => {
     await createPayeeAction(baseFormData());
-    await flushMicrotasks();
 
     const identity = await prisma.payeeIdentity.findUniqueOrThrow({ where: { senderAddr } });
+    await waitUntilGrantSettled(identity.payeeId);
     const payee = await prisma.payee.findUniqueOrThrow({ where: { id: identity.payeeId } });
     expect(payee.status).toBe("approved");
   });
@@ -132,12 +161,14 @@ describe("createPayeeAction — never touches payment execution", () => {
 
     await expect(prisma.payeeIdentity.findUnique({ where: { senderAddr: senderAddrTwo } })).resolves.toBeNull();
 
-    // Release the lock before the test ends — enableGrantViaPerfloCli
-    // rejecting here mirrors a real PerfloUnknownOutcomeError-shaped
-    // outcome, which deliberately leaves the row as pending_grant rather
-    // than guessing; delete it directly instead of waiting on that chain.
+    // Release the lock before the test ends, and wait for the real
+    // (unawaited-by-production-code) applyGrantOutcome write to actually
+    // land, rather than deleting the row out from under it — otherwise
+    // that write can complete during a later test and re-trip the global
+    // pending_grant lock this test exists to prove.
+    const firstIdentity = await prisma.payeeIdentity.findUniqueOrThrow({ where: { senderAddr } });
     releaseFirstCall();
-    await flushMicrotasks();
+    await waitUntilGrantSettled(firstIdentity.payeeId);
     await cleanupSender(senderAddr);
   });
 
@@ -153,12 +184,13 @@ describe("createPayeeAction — never touches payment execution", () => {
 });
 
 describe("replaceRailAction / revokeRailAction — same execution boundary", () => {
-  it("replaces a rail only with owner confirmation, and never creates a PaymentIntent", async () => {
+  it("blocks rail replacement until the real Perflo beneficiary is re-registered and re-approved", async () => {
     await createPayeeAction(baseFormData());
     const identity = await prisma.payeeIdentity.findUniqueOrThrow({ where: { senderAddr } });
+    await waitUntilGrantSettled(identity.payeeId);
     const method = await prisma.payeePaymentMethod.findFirstOrThrow({ where: { payeeId: identity.payeeId } });
 
-    await replaceRailAction((() => {
+    await expect(replaceRailAction((() => {
       const fd = new FormData();
       fd.set("oldMethodId", method.id);
       fd.set("ownerConfirmed", "on");
@@ -167,15 +199,17 @@ describe("replaceRailAction / revokeRailAction — same execution boundary", () 
       fd.set("accountNumber", "");
       fd.set("ifsc", "");
       return fd;
-    })());
+    })())).rejects.toThrow(/new Perflo beneficiary and obtain a new approval/);
 
     const oldRow = await prisma.payeePaymentMethod.findUniqueOrThrow({ where: { id: method.id } });
-    expect(oldRow.status).toBe("replaced");
+    expect(oldRow.status).toBe("active");
+    expect(await prisma.payeePaymentMethod.count({ where: { payeeId: identity.payeeId } })).toBe(1);
   });
 
   it("revokes a rail only with owner confirmation", async () => {
     await createPayeeAction(baseFormData());
     const identity = await prisma.payeeIdentity.findUniqueOrThrow({ where: { senderAddr } });
+    await waitUntilGrantSettled(identity.payeeId);
     const method = await prisma.payeePaymentMethod.findFirstOrThrow({ where: { payeeId: identity.payeeId } });
 
     await expect(revokeRailAction((() => {

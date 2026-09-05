@@ -65,6 +65,18 @@ describe("reconcileStuckPayments", () => {
     expect(row.lastError).toBeNull();
   });
 
+  it("queries and resolves a Perflo transaction hash instead of skipping it as non-Razorpay", async () => {
+    await makeIntent("reconcile-test-perflo", { status: "unknown_outcome", paymentReference: "0xabc123" });
+    const executor = fakeExecutor({ "0xabc123": { providerReference: "0xabc123", status: "paid" } });
+
+    const summary = await reconcileStuckPayments(executor);
+
+    expect(summary.updated).toBe(1);
+    const row = await prisma.paymentIntent.findUniqueOrThrow({ where: { emailId: "reconcile-test-perflo" } });
+    expect(row.status).toBe("paid");
+    expect(row.paymentReference).toBe("0xabc123");
+  });
+
   it("marks a stuck payment failed once the provider confirms a definite rejection", async () => {
     await makeIntent("reconcile-test-2", { status: "unknown_outcome", paymentReference: "pout_2" });
     const executor = fakeExecutor({
@@ -128,5 +140,37 @@ describe("reconcileStuckPayments", () => {
       ["reconcile-test-7", "paid"],
       ["reconcile-test-8", "failed"],
     ]);
+  });
+
+  it("promotes a claimed row stuck long past its own claim to unknown_outcome, never paid or failed", async () => {
+    await makeIntent("reconcile-test-9", { status: "claimed" });
+    // Long enough to be unambiguously stale for any reasonable staleness
+    // window — this is standing in for a worker crash right after claiming
+    // the row (possibly after the provider call itself already went out),
+    // which today has no expiry, no lease, and no way back into view.
+    const longAgo = new Date(Date.now() - 60 * 60 * 1000);
+    await prisma.paymentIntent.update({ where: { emailId: "reconcile-test-9" }, data: { claimedAt: longAgo } });
+    const executor = fakeExecutor({});
+
+    const summary = await reconcileStuckPayments(executor);
+
+    expect(summary.updated).toBeGreaterThanOrEqual(1);
+    const row = await prisma.paymentIntent.findUniqueOrThrow({ where: { emailId: "reconcile-test-9" } });
+    // FR-27: never guess. A stale claim's fate is unknown — it must land in
+    // unknown_outcome for a human to check provider activity, never be
+    // auto-marked paid (would hide a real failure) or failed (would offer a
+    // Retry button that could pay a second time if the first call landed).
+    expect(row.status).toBe("unknown_outcome");
+  });
+
+  it("leaves a freshly claimed row alone — a real in-flight payment is not 'stuck'", async () => {
+    await makeIntent("reconcile-test-10", { status: "claimed" });
+    await prisma.paymentIntent.update({ where: { emailId: "reconcile-test-10" }, data: { claimedAt: new Date() } });
+    const executor = fakeExecutor({});
+
+    await reconcileStuckPayments(executor);
+
+    const row = await prisma.paymentIntent.findUniqueOrThrow({ where: { emailId: "reconcile-test-10" } });
+    expect(row.status).toBe("claimed");
   });
 });

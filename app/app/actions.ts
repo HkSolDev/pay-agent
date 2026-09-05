@@ -9,6 +9,8 @@ import { isSyncPaused, setSyncPaused } from "../../worker/src/sync-state";
 import { reviewRetryBlockReason } from "../../worker/src/review-retry";
 import { reevaluatePolicy } from "../../worker/src/reevaluate-policy";
 import { resumeAutoPayForEligibleInvoices } from "../../worker/src/resume-auto-pay";
+import { runPaidVerifierForEmail } from "../../worker/src/paid-verification";
+import type { VerificationResult } from "../../worker/src/verifier";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -26,7 +28,7 @@ export async function preparePayment(formData: FormData) {
     select: { id: true, resolvedPayeeId: true, extractionSummary: true },
   });
   if (!email?.resolvedPayeeId) {
-    throw new Error("The email to pay no longer exists.");
+    throw new Error("This invoice's payee hasn't been approved yet — approve the payee in /payees first.");
   }
   const payee = await prisma.payee.findUnique({ where: { id: email.resolvedPayeeId }, select: { recipientNickname: true } });
   if (!payee) throw new Error("The resolved payee no longer exists.");
@@ -44,15 +46,34 @@ export async function preparePayment(formData: FormData) {
   const validation = validatePaymentInput(payee.recipientNickname, amount);
   if (!validation.ok || !currency) throw new Error("The invoice does not contain a valid payable amount and currency.");
 
+  // Paid verification is deliberately triggered here, at the real prepare
+  // boundary, rather than from normal ingest. The owner may still explicitly
+  // confirm a payment after an unverified paid check; auto-pay fails closed.
+  await runPaidVerifierForEmail(emailId);
+
   // idempotencyKey is generated once here, at prepare time, and never
   // touched again on re-prepare — it identifies the logical payment, not
   // the attempt (same principle FR-23 uses for the real idempotency key).
   const idempotencyKey = randomBytes(16).toString("hex");
-  await prisma.paymentIntent.upsert({
-    where: { emailId },
-    create: { emailId, recipientNickname: payee.recipientNickname, amount, currency, idempotencyKey },
-    update: { recipientNickname: payee.recipientNickname, amount, currency },
+  // Guarded, not a plain upsert: once a row has left "pending"/"failed"
+  // (claimed, paid, or unknown_outcome), its payable fields are the record
+  // of what was actually claimed/paid and must never be silently rewritten
+  // by a later re-extraction or re-prepare of the same invoice. The
+  // conditional updateMany only touches a row still eligible for a fresh
+  // prepare; if it matches nothing, the upsert below either creates the
+  // row for the first time or — if it already exists but is locked — is a
+  // genuine no-op on it.
+  const repaired = await prisma.paymentIntent.updateMany({
+    where: { emailId, status: { in: ["pending", "failed"] } },
+    data: { recipientNickname: payee.recipientNickname, amount, currency },
   });
+  if (repaired.count === 0) {
+    await prisma.paymentIntent.upsert({
+      where: { emailId },
+      create: { emailId, recipientNickname: payee.recipientNickname, amount, currency, idempotencyKey },
+      update: {},
+    });
+  }
   revalidatePath("/");
 }
 
@@ -80,15 +101,32 @@ export async function confirmPayment(emailId: string, _formData: FormData): Prom
     const sourceAmount = summary.amount;
     const amount = typeof sourceAmount?.value === "string" ? sourceAmount.value : "";
     const currency = sourceAmount?.currency === "USD" ? "USD" : sourceAmount?.currency === "INR" ? "INR" : "";
+    // Same guard as preparePayment's, and for the same reason: only a row
+    // still "pending" or "failed" gets its payable fields repaired here.
+    // Once claimed/paid/unknown_outcome, they're the record of what was
+    // actually claimed/paid, not something a stale-field repair should ever
+    // touch again — updateMany (not update) so a row that doesn't match
+    // simply isn't touched, rather than throwing on a locked row.
     if (payee && currency && validatePaymentInput(payee.recipientNickname, amount).ok) {
-      await prisma.paymentIntent.update({
-        where: { emailId },
+      await prisma.paymentIntent.updateMany({
+        where: { emailId, status: { in: ["pending", "failed"] } },
         data: { recipientNickname: payee.recipientNickname, amount, currency },
       });
     }
   }
+  // Confirm is also a valid pre-payment trigger for intents prepared before
+  // paid verification was wired, while the runner reuses existing evidence so
+  // Prepare → Confirm does not pay for the same checks twice.
+  await runPaidVerifierForEmail(emailId);
   await executePreparedPayment(emailId);
   revalidatePath("/");
+}
+
+/** Runs the paid verifier when the owner opens a queue row's review drawer. */
+export async function runPaidVerificationAction(emailId: string): Promise<VerificationResult> {
+  const result = await runPaidVerifierForEmail(emailId);
+  revalidatePath("/");
+  return result.verification;
 }
 
 const REVIEW_ACTIONS = {

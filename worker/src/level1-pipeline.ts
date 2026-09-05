@@ -6,6 +6,7 @@ import { decidePolicy, applyCurrencyGuard, type PolicyDecision } from "./policy-
 import { resolvePayee, type ApprovedPayee, type ResolveResult } from "./payee-resolver.js";
 import { verifyEmail, type VerificationResult } from "./verifier.js";
 import { computeGrantStatus, amountWithinOwnerCeiling, amountAboveMinimum, type PayeeUsage } from "./auto-pay-eligibility.js";
+import type { PaidVerifierInput, PaidVerifierResult } from "./x402-verifier.js";
 
 export interface Level1PipelineInput {
   emailId: string;
@@ -22,6 +23,7 @@ export interface Level1PipelineInput {
   // Postgres. Defaults to "nothing used yet" for callers (existing tests)
   // that don't care about auto-pay at all.
   loadPayeeUsage?: (recipientNickname: string) => Promise<PayeeUsage>;
+  paidVerification?: (input: PaidVerifierInput) => Promise<PaidVerifierResult>;
 }
 
 export interface Level1PipelineResult {
@@ -99,15 +101,31 @@ export async function processLevel1(
     links: input.links,
     injectionDetected: input.classification.injectionDetected,
   });
+  if (input.paidVerification) {
+    const paid = await input.paidVerification({
+      emailId: input.emailId,
+      fromAddr: input.extractionInput.fromAddr ?? "",
+      links: input.links,
+      isNewPayee: input.approvedPayees.every((payee) => payee.senderAddr.toLowerCase() !== (input.extractionInput.fromAddr ?? "").toLowerCase()),
+      amountAboveOwnerThreshold: false,
+    });
+    verification.unverified = paid.status === "unverified";
+    verification.paidChecks = paid;
+  }
   const resolution: ResolveResult = extraction.paymentMethods.length === 1
     ? resolvePayee({ senderAddr: input.extractionInput.fromAddr ?? "", paymentMethod: extraction.paymentMethods[0], allowAnySender: process.env.DEMO_MODE === "true" }, input.approvedPayees)
     : extraction.paymentMethods.length > 1 ? { status: "multiple_payment_methods" } : { status: "new_payee" };
-  // A changed rail and an unresolved multi-rail invoice are ordinary owner
-  // review cases. The resolver already carries the decisive status; do not
-  // let the verifier's generic mismatch evidence upgrade those cases to
-  // quarantine. A sender/rail belonging to different payees remains a
-  // quarantine through identity_method_conflict.
-  if (resolution.status === "details_changed" || resolution.status === "multiple_payment_methods") {
+  // An unresolved multi-rail invoice is always ordinary owner review: there
+  // was never one approved method to compare against, so the mismatch
+  // signal is noise regardless of auth. A changed rail from an
+  // already-known sender (`details_changed`) is also ordinary owner review
+  // — PRD Section 8.1 row #3 — but only when the message itself
+  // authenticates; a details change riding on a DMARC/SPF+DKIM alignment
+  // failure is the takeover pattern PRD Section 15 T-17 requires hard
+  // quarantine for, so the hard fail must survive in that case instead of
+  // being stripped like a legitimate detail update. A sender/rail belonging
+  // to different payees remains a quarantine through identity_method_conflict.
+  if (resolution.status === "multiple_payment_methods" || (resolution.status === "details_changed" && verification.authPassed)) {
     verification.hardFails = verification.hardFails.filter((fail) => fail !== "payment_method_mismatch");
   }
   const resolvedPayeeId = resolution.status === "resolved" ? resolution.payeeId : null;

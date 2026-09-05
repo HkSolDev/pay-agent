@@ -14,6 +14,12 @@ export interface VerificationResult {
   hardFails: string[];
   softFlags: string[];
   score: number;
+  unverified?: boolean;
+  paidChecks?: {
+    status: "verified" | "unverified";
+    checks: Array<{ capability: string; status: "verified" | "unverified"; txHash: string | null; result: unknown }>;
+    unverifiedReason?: string;
+  };
 }
 
 function domainOf(address: string): string {

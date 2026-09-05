@@ -20,7 +20,7 @@ export interface PolicyInput {
   };
   resolution: ResolveResult;
   auth: { dmarcPass: boolean; alignedSpfDkimPass: boolean };
-  verification: { hardFails: string[]; score: number };
+  verification: { hardFails: string[]; score: number; unverified?: boolean };
   duplicate: boolean;
   grant: { active: boolean; notExpired: boolean; perPaymentCapOk: boolean; remainingAmountOk: boolean; remainingCountOk: boolean };
   amountWithinOwnerCeiling: boolean;
@@ -70,13 +70,17 @@ export function decidePolicy(input: PolicyInput): { decision: PolicyDecision; re
   if (input.classification.confidence < CONFIDENCE_BAR) {
     reasons.push(`Classification confidence (${input.classification.confidence}) below ${CONFIDENCE_BAR}.`);
   }
+  // An exact resolved status independently binds the sender and payment rail
+  // to one already-approved payee, which is stronger identity evidence than
+  // the extracted display name. All non-resolved statuses keep the raw name
+  // confidence gate, so new or changed payees remain owner-review-only.
   const fieldConfidences: Record<string, number> = {
-    payeeName: input.extraction.payeeNameConfidence,
     amount: input.extraction.amountConfidence,
     paymentMethod: input.extraction.paymentMethodConfidence,
     referenceNumber: input.extraction.referenceNumberConfidence,
     currency: input.extraction.currencyConfidence,
   };
+  if (input.resolution.status !== "resolved") fieldConfidences.payeeName = input.extraction.payeeNameConfidence;
   for (const [field, confidence] of Object.entries(fieldConfidences)) {
     if (confidence < CONFIDENCE_BAR) reasons.push(`${field} confidence (${confidence}) below ${CONFIDENCE_BAR}.`);
   }
@@ -92,6 +96,7 @@ export function decidePolicy(input: PolicyInput): { decision: PolicyDecision; re
   if (input.verification.score < VERIFIER_SCORE_BAR) {
     reasons.push(`Verifier score (${input.verification.score}) below ${VERIFIER_SCORE_BAR}.`);
   }
+  if (input.verification.unverified) reasons.push("Paid verifier checks are unverified.");
 
   const grantOk = input.grant.active && input.grant.notExpired && input.grant.perPaymentCapOk
     && input.grant.remainingAmountOk && input.grant.remainingCountOk;

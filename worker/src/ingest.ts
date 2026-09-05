@@ -15,6 +15,7 @@ import { loadApprovedPayees } from "./payee-store.js";
 import { loadPayeeUsage } from "./payment-usage.js";
 import { runAutoPayIfEligible } from "./auto-pay-runner.js";
 import { reviewRetryBlockReason } from "./review-retry.js";
+import { sendNewPayeeApprovalEmail, sendQuarantineAlert, type NewPayeeApprovalNotification, type QuarantineNotification } from "./notifications.js";
 
 export const MAX_PDF_ATTACHMENTS_PER_EMAIL = 3;
 export const MAX_PDF_ATTACHMENT_BYTES = 10 * 1024 * 1024;
@@ -25,6 +26,8 @@ export interface IngestDeps {
   classifyEmail: (input: ClassifierInput) => Promise<ClassificationResult>;
   extractPaymentDetails?: (input: ExtractionInput) => Promise<ExtractionResult>;
   loadApprovedPayees?: () => Promise<ApprovedPayee[]>;
+  sendNewPayeeApprovalEmail?: (input: NewPayeeApprovalNotification) => Promise<boolean>;
+  sendQuarantineAlert?: (input: QuarantineNotification) => Promise<boolean>;
 }
 
 // Safety switch, opt-IN not opt-out: the free rule-based classifier runs
@@ -52,6 +55,8 @@ const defaultDeps: IngestDeps = {
   extractPdfText,
   classifyEmail: classifyWithSelectedBackend,
   loadApprovedPayees,
+  sendNewPayeeApprovalEmail: (input) => sendNewPayeeApprovalEmail(input),
+  sendQuarantineAlert: (input) => sendQuarantineAlert(input),
 };
 
 function authFromJson(value: unknown): { dmarc: string | null; spf: string | null; dkim: string | null } {
@@ -139,13 +144,80 @@ type ProcessableEmail = {
   classificationRationale: string | null;
   injectionDetected: boolean;
   injectionEvidence: unknown;
+  policyDecision: string | null;
+  newPayeeApprovalEmailSentAt: Date | null;
+  quarantineAlertSentAt: Date | null;
 };
+
+type NotificationHooks = Pick<Required<IngestDeps>, "sendNewPayeeApprovalEmail" | "sendQuarantineAlert">;
+
+const disabledNotification = async (): Promise<boolean> => false;
+
+function reviewUrl(emailId: string): string {
+  const base = (process.env.APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
+  return `${base}/?email=${encodeURIComponent(emailId)}`;
+}
+
+function evidenceSummary(result: Level1PipelineResult): string {
+  const auth = result.verification.authPassed ? "Authentication passed" : "Authentication did not pass";
+  const flags = [...result.verification.hardFails, ...result.verification.softFlags];
+  return `${auth}; first-seen sender; ${flags.length > 0 ? `flags: ${flags.join(", ")}` : "no additional flags"}.`;
+}
+
+async function notifyForDecision(row: ProcessableEmail, result: Level1PipelineResult, hooks: NotificationHooks): Promise<void> {
+  if (result.decision === "quarantine" && row.quarantineAlertSentAt === null) {
+    const claimedAt = new Date();
+    const claim = await prisma.email.updateMany({
+      where: { id: row.id, policyDecision: "quarantine", quarantineAlertSentAt: null },
+      data: { quarantineAlertSentAt: claimedAt },
+    });
+    if (claim.count === 1) {
+      try {
+        const sent = await hooks.sendQuarantineAlert({
+          reviewUrl: reviewUrl(row.id),
+          fromAddr: row.fromAddr,
+          subject: row.subject,
+          reasons: result.reasons,
+        });
+        if (!sent) await prisma.email.updateMany({ where: { id: row.id, quarantineAlertSentAt: claimedAt }, data: { quarantineAlertSentAt: null } });
+      } catch (error) {
+        await prisma.email.updateMany({ where: { id: row.id, quarantineAlertSentAt: claimedAt }, data: { quarantineAlertSentAt: null } });
+        console.error(`[notify] quarantine alert failed for ${row.id}:`, error);
+      }
+    }
+  }
+
+  if (result.decision === "needs_approval" && result.resolution.status === "new_payee" && row.newPayeeApprovalEmailSentAt === null) {
+    const claimedAt = new Date();
+    const claim = await prisma.email.updateMany({
+      where: { id: row.id, policyDecision: "needs_approval", newPayeeApprovalEmailSentAt: null },
+      data: { newPayeeApprovalEmailSentAt: claimedAt },
+    });
+    if (claim.count === 1) {
+      try {
+        const sent = await hooks.sendNewPayeeApprovalEmail({
+          approvalUrl: reviewUrl(row.id),
+          payeeName: result.extraction.payeeName ?? row.fromName ?? row.fromAddr,
+          amount: result.extraction.amount,
+          subject: row.subject,
+          fromAddr: row.fromAddr,
+          evidenceSummary: evidenceSummary(result),
+        });
+        if (!sent) await prisma.email.updateMany({ where: { id: row.id, newPayeeApprovalEmailSentAt: claimedAt }, data: { newPayeeApprovalEmailSentAt: null } });
+      } catch (error) {
+        await prisma.email.updateMany({ where: { id: row.id, newPayeeApprovalEmailSentAt: claimedAt }, data: { newPayeeApprovalEmailSentAt: null } });
+        console.error(`[notify] new-payee approval email failed for ${row.id}:`, error);
+      }
+    }
+  }
+}
 
 async function processEmailRow(
   row: ProcessableEmail,
   approvedPayees: ApprovedPayee[],
   history: PayableFingerprint[],
   extract: (input: ExtractionInput) => Promise<ExtractionResult>,
+  hooks: NotificationHooks,
   options: { allowAutoPay?: boolean; markReprocessed?: boolean } = {},
 ): Promise<void> {
     const kind = row.classification ?? "unrelated";
@@ -184,6 +256,8 @@ async function processEmailRow(
       },
     });
 
+    await notifyForDecision(row, result, hooks);
+
     if (options.allowAutoPay !== false && result.decision === "auto_pay" && result.resolution.status === "resolved" && result.extraction.amount) {
       await runAutoPayIfEligible({
         emailId: row.id,
@@ -198,7 +272,8 @@ async function processEmailRow(
 const processableEmailSelect = {
   id: true, gmailMessageId: true, fromAddr: true, fromName: true, subject: true, bodyText: true, replyTo: true,
   auth: true, links: true, classification: true, classificationConfidence: true, classificationRationale: true,
-  injectionDetected: true, injectionEvidence: true,
+  injectionDetected: true, injectionEvidence: true, policyDecision: true,
+  newPayeeApprovalEmailSentAt: true, quarantineAlertSentAt: true,
 } as const;
 
 async function processInsertedEmails(deps: IngestDeps, gmailMessageIds: string[]): Promise<void> {
@@ -223,7 +298,10 @@ async function processInsertedEmails(deps: IngestDeps, gmailMessageIds: string[]
   // resolved fingerprint. The database remains the source of truth for
   // idempotent insertion; this only makes duplicate review deterministic.
   for (const row of rows) {
-    await processEmailRow(row, approvedPayees, history, extract);
+    await processEmailRow(row, approvedPayees, history, extract, {
+      sendNewPayeeApprovalEmail: deps.sendNewPayeeApprovalEmail ?? disabledNotification,
+      sendQuarantineAlert: deps.sendQuarantineAlert ?? disabledNotification,
+    });
     const processedRows = await prisma.email.findMany({
       where: { level1ProcessedAt: { not: null } },
       select: { id: true, resolvedPayeeId: true, extractionSummary: true },
@@ -245,7 +323,11 @@ export async function processPendingLevel1(deps: IngestDeps = defaultDeps): Prom
     where: { level1ProcessedAt: { not: null } },
     select: { id: true, resolvedPayeeId: true, extractionSummary: true },
   });
-  await Promise.all(rows.map((row) => processEmailRow(row, approvedPayees, fingerprintsFromRows(previousRows), deps.extractPaymentDetails ?? extractWithSelectedBackend)));
+  const hooks: NotificationHooks = {
+    sendNewPayeeApprovalEmail: deps.sendNewPayeeApprovalEmail ?? disabledNotification,
+    sendQuarantineAlert: deps.sendQuarantineAlert ?? disabledNotification,
+  };
+  await Promise.all(rows.map((row) => processEmailRow(row, approvedPayees, fingerprintsFromRows(previousRows), deps.extractPaymentDetails ?? extractWithSelectedBackend, hooks)));
 }
 
 /** Re-run the review-only Level 1 stages for an existing email. */
@@ -266,6 +348,9 @@ export async function retryLevel1Processing(emailId: string): Promise<void> {
   // A user-initiated review retry refreshes evidence only. It must never turn
   // a previously reviewed email into a new automatic payout.
   await processEmailRow(row, approvedPayees, fingerprintsFromRows(previousRows), extractWithSelectedBackend, {
+    sendNewPayeeApprovalEmail: (input) => sendNewPayeeApprovalEmail(input),
+    sendQuarantineAlert: (input) => sendQuarantineAlert(input),
+  }, {
     allowAutoPay: false,
     markReprocessed: true,
   });

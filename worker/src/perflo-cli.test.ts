@@ -3,11 +3,48 @@ import {
   buildBeneficiaryAddArgs,
   buildGrantEnableArgs,
   classifyBeneficiaryAddStdout,
+  classifyPerfloActivityStdout,
   classifyPerfloStdout,
+  classifyPerfloTxStatusStdout,
   extractApproveUrl,
   PerfloDefiniteFailure,
   PerfloUnknownOutcomeError,
 } from "./perflo-cli.js";
+
+describe("classifyPerfloTxStatusStdout", () => {
+  it.each([
+    ["success", "paid"],
+    ["failed", "failed"],
+    ["submitted", "processing"],
+    ["processing", "processing"],
+    ["executing", "processing"],
+  ] as const)("maps Perflo tx status %s to payout status %s", (status, expected) => {
+    expect(classifyPerfloTxStatusStdout("0xabc123", JSON.stringify({ ok: true, txHash: "0xabc123", status }))).toMatchObject({
+      providerReference: "0xabc123",
+      status: expected,
+    });
+  });
+});
+
+describe("classifyPerfloActivityStdout", () => {
+  it.each([
+    ["success", "paid"],
+    ["failed", "failed"],
+    ["processing", "processing"],
+  ] as const)("maps payout ID activity status %s to payout status %s", (activityStatus, expected) => {
+    const payoutId = "pout_TW4UaGrktdcx23";
+    const stdout = JSON.stringify({
+      ok: true,
+      money: [{ id: payoutId, type: "payout", status: activityStatus, txHash: "0xabc123" }],
+      agent: { transactions: [] },
+    });
+
+    expect(classifyPerfloActivityStdout(payoutId, stdout)).toMatchObject({
+      providerReference: "0xabc123",
+      status: expected,
+    });
+  });
+});
 
 describe("classifyPerfloStdout", () => {
   it("treats a clean {ok:false} response as a definite, retry-safe failure", () => {
@@ -27,7 +64,13 @@ describe("classifyPerfloStdout", () => {
 
   it("treats a reference with confirmed:false as unknown outcome, not success — reproduced live 4 Sep 2026", () => {
     const stdout = JSON.stringify({ ok: true, status: "timeout", moved: true, confirmed: false, paymentId: "pmt_2", txHash: "0xghi789" });
-    expect(() => classifyPerfloStdout(stdout)).toThrow(PerfloUnknownOutcomeError);
+    try {
+      classifyPerfloStdout(stdout);
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(PerfloUnknownOutcomeError);
+      expect((error as Error & { paymentReference?: string }).paymentReference).toBe("0xghi789");
+    }
   });
 
   it("treats unparseable stdout as unknown, never as a safe-to-retry failure", () => {

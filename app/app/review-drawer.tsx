@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { retryReviewProcessing, updateReviewAction } from "./actions";
+import { retryReviewProcessing, runPaidVerificationAction, updateReviewAction } from "./actions";
 import { buildReviewDrawerModel, type ReviewEmail, type ReviewIntent } from "./review-drawer-model";
 import { reviewRetryBlockReason, type ReviewRetryPaymentStatus } from "../../worker/src/review-retry";
 
@@ -145,7 +145,30 @@ export function ReviewDrawer({
                         <path d="M8 12l6-6a3 3 0 114 4l-8 8a5 5 0 01-7-7l7-7" />
                       </svg>
                       <div>
-                        <strong style={{ fontSize: "13px" }}>{attachment.name}</strong>
+                        {attachment.viewUrl ? (
+                          <a
+                            href={attachment.viewUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              fontSize: "13px",
+                              fontWeight: 600,
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px",
+                            }}
+                            title="Open PDF in new tab"
+                          >
+                            {attachment.name}
+                            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                              <polyline points="15 3 21 3 21 9" />
+                              <line x1="10" y1="14" x2="21" y2="3" />
+                            </svg>
+                          </a>
+                        ) : (
+                          <strong style={{ fontSize: "13px" }}>{attachment.name}</strong>
+                        )}
                         <div style={{ fontSize: "11px", opacity: 0.55 }}>{attachment.type} · {attachment.size}</div>
                       </div>
                     </div>
@@ -287,7 +310,24 @@ export function ReviewDrawer({
 
 export function ReviewDrawerLauncher({ email, intent }: { email: ReviewEmail; intent?: ReviewIntent }) {
   const [open, setOpen] = useState(false);
+  const [opening, setOpening] = useState(false);
+  const [verificationResult, setVerificationResult] = useState(email.verificationResult);
   const triggerRef = useRef<HTMLButtonElement>(null);
+
+  async function openReview() {
+    setOpening(true);
+    try {
+      const verification = await runPaidVerificationAction(email.id);
+      setVerificationResult(verification);
+    } catch (error) {
+      // Paid verification must never make the queue unusable. The drawer still
+      // opens with the evidence already present on the row.
+      console.error("Could not run paid verification for review row:", error);
+    } finally {
+      setOpening(false);
+      setOpen(true);
+    }
+  }
 
   return (
     <>
@@ -295,14 +335,15 @@ export function ReviewDrawerLauncher({ email, intent }: { email: ReviewEmail; in
         ref={triggerRef}
         type="button"
         className="review-trigger"
-        onClick={() => setOpen(true)}
+        onClick={() => void openReview()}
+        disabled={opening}
         aria-haspopup="dialog"
       >
-        Review row
+        {opening ? "Opening…" : "Review row"}
       </button>
       {open ? (
         <ReviewDrawer
-          email={email}
+          email={{ ...email, verificationResult }}
           intent={intent}
           onClose={() => {
             setOpen(false);

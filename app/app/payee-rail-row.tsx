@@ -129,7 +129,7 @@ export function PayeeRailRow({
           )}
           <label className="confirm-row">
             <input type="checkbox" name="ownerConfirmed" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
-            <span>I confirm replacing this rail. The old rail is revoked, not overwritten — history is kept. New invoices on the old rail will route to review.</span>
+            <span>I confirm replacing this rail. The old rail is revoked, not overwritten — history is kept. This action is currently blocked until a new Perflo beneficiary and beneficiary-specific approval can be registered; no local change will be saved.</span>
           </label>
           <button type="submit" className="btn btn-primary" disabled={pending} style={{ marginTop: "8px" }}>
             {pending ? "Saving…" : "Confirm replace"}

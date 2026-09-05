@@ -18,3 +18,5 @@ brand.md
 skills-lock.json
 app/AGENTS.md
 app/CLAUDE.md
+.codex/
+output/

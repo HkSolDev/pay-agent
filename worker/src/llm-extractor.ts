@@ -37,7 +37,11 @@ cannot browse, cannot make decisions, and cannot take any action. The user messa
 Return strict JSON only. Extract a field only when the evidence is clear. Never invent a payee, currency, date, payment method,
 or reference. Money values must be decimal strings with exactly two digits. A UPI VPA is not a payee name. Bank payment requires
 both account number and IFSC. Ambiguous numeric dates (such as 05/09/2026) must be null. Return [] and confidence 0 when no
-valid payment method is present.`;
+valid payment method is present. For a field such as "Payee Name: Test Vendor", extract the value after the complete label
+("Test Vendor"), never a word from the label itself (such as "Name"). Invoice text extracted from a PDF often flattens a table
+into one line per row (for example, a line item's Amount column may appear next to its Qty, Rate, and Tax). When a line is
+labeled "Total", "Total amount due", "Amount due", or "Grand total", treat the value on that line as the definitive invoice
+amount and extract it with high confidence, even if the same numeric value appears earlier in a line-item row.`;
 
 export function buildOpenAIExtractorMessages(input: ExtractionInput) {
   return [
@@ -87,6 +91,8 @@ async function callOpenAI(input: ExtractionInput): Promise<string> {
 const DECIMAL_AMOUNT = /^\d+\.\d{2}$/;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const IFSC = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+const TOTAL_AMOUNT_FALLBACK_CONFIDENCE = 0.85;
+const TOTAL_AMOUNT_LINE = /(?:^|\r?\n)[ \t]*(?:total(?:[ \t]+amount)?(?:[ \t]+due)?|grand[ \t]+total)[ \t]*:?[ \t]*(INR|USD|₹|\$)[ \t]*([\d,]+\.\d{2})(?=[ \t]*(?:\r?\n|$))/gim;
 
 function isConfidence(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
@@ -108,6 +114,23 @@ function validMethod(value: unknown): value is PaymentMethod {
 
 function normalizeReference(value: string): string {
   return value.trim().replace(/\s+/g, "").toUpperCase();
+}
+
+// Directly labelled source text outranks a model answer or fallback-parser
+// artifact. In particular, the broad deterministic `payee` pattern can read
+// "Payee Name: Test Vendor" as payee="Name" because `Name` is the first token
+// after `Payee`. Match the complete label here and retain its actual value.
+function corroboratePayeeNameWithSource(
+  extracted: ExtractionResult,
+  input: ExtractionInput,
+): ExtractionResult {
+  const labelled = input.bodyText?.match(/^\s*payee\s+name\s*:\s*([^\r\n]+?)\s*$/im)?.[1]?.trim();
+  if (!labelled || /@/.test(labelled)) return extracted;
+  return {
+    ...extracted,
+    payeeName: labelled.replace(/\s+/g, " "),
+    payeeNameConfidence: 1,
+  };
 }
 
 /**
@@ -147,6 +170,29 @@ function corroborateReferenceWithSource(
   return {
     ...extracted,
     referenceNumberConfidence: Math.min(extracted.referenceNumberConfidence, 0.5),
+  };
+}
+
+/**
+ * PDF table extraction can leave the model cautious about an otherwise clear
+ * summary row. Only an explicit supported currency and exact decimal amount
+ * qualify; 0.85 records that this is a source-regex backstop, not LLM certainty.
+ */
+function corroborateAmountWithSource(
+  extracted: ExtractionResult,
+  input: ExtractionInput,
+): ExtractionResult {
+  if (extracted.amount && extracted.amountConfidence >= TOTAL_AMOUNT_FALLBACK_CONFIDENCE) return extracted;
+
+  const matches = Array.from((input.bodyText ?? "").matchAll(TOTAL_AMOUNT_LINE));
+  const match = matches[matches.length - 1];
+  if (!match) return extracted;
+
+  const currency: "INR" | "USD" = match[1] === "₹" ? "INR" : match[1] === "$" ? "USD" : match[1] as "INR" | "USD";
+  return {
+    ...extracted,
+    amount: { currency, value: match[2].replace(/,/g, "") },
+    amountConfidence: TOTAL_AMOUNT_FALLBACK_CONFIDENCE,
   };
 }
 
@@ -190,8 +236,11 @@ export async function extractPaymentDetailsWithLLM(
       new Promise<string>((_resolve, reject) => setTimeout(() => reject(new Error("LLM extraction timed out.")), timeoutMs)),
     ]);
     const parsed = parseLLMExtractorOutput(raw);
-    return parsed ? corroborateReferenceWithSource(parsed, fallback) : fallback;
+    const extracted = parsed ? corroborateReferenceWithSource(parsed, fallback) : fallback;
+    const amountCorroborated = corroborateAmountWithSource(extracted, input);
+    return corroboratePayeeNameWithSource(amountCorroborated, input);
   } catch {
-    return fallback;
+    const amountCorroborated = corroborateAmountWithSource(fallback, input);
+    return corroboratePayeeNameWithSource(amountCorroborated, input);
   }
 }
