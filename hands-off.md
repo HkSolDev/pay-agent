@@ -1,7 +1,27 @@
 # Perflo AP Agent — Hands-off Handoff
 
-Last verified: 2026-09-05, later the same day (test-suite non-determinism: env-leak fix + vitest.config.ts fixing the real cross-file lock race; 3 consecutive `pnpm test` runs byte-identical; **not yet committed, reported back for verification per explicit instruction**)
-Branch: `feat/perflo-beneficiary-approval` — verified via `git status` and `git log --oneline -5` just before writing this line. HEAD is `1b9db99`. `git status` shows this session's own changes (`worker/src/payee-store.integration.test.ts`, `worker/src/demo-scenarios.integration.test.ts`, `worker/src/payee-rail-lifecycle.integration.test.ts`, `worker/src/payee-approval-deps.integration.test.ts`, new `vitest.config.ts`) plus separate uncommitted drift in `app/app/payee-actions.test.ts`, `worker/src/payee-approval-deps.ts`, `worker/src/payee-approval-deps.enable-grant.test.ts`, and an untracked `.codex/` directory from another session's concurrent work — confirmed via `git diff --stat` to carry zero lines from this task (this task's own diff on those three files is exactly nothing).
+Last verified: 2026-09-05, later the same day (fixed a real critical bug flagged by an independent security review: post-payment persistence-write failure was misclassified `"failed"` instead of `"unknown_outcome"`; test-first, red then green; **not yet committed, reported back for verification per explicit instruction**)
+Branch: `feat/perflo-beneficiary-approval` — verified via `git status` and `git log --oneline -5` just before writing this line. HEAD is `1b9db99`. `git status` shows this session's own changes (`worker/src/payment-execution.ts`, new `worker/src/payment-execution.test.ts`) plus separate uncommitted drift from other concurrent sessions (`app/app/payee-actions.test.ts`, `worker/src/payee-approval-deps.ts`, `worker/src/payee-approval-deps.enable-grant.test.ts`, an untracked `.codex/` directory) — confirmed via `git diff --stat` to carry zero lines from this task.
+
+## Session summary — 2026-09-05, later the same day (fixed: post-payment persistence-write failure misclassified as "failed")
+
+**What this session did, in one sentence:** an independent security review found that `worker/src/payment-execution.ts`'s `executePreparedPayment` classified a post-payment database-write failure as `"failed"` (implying safe-to-retry) instead of `"unknown_outcome"` (never-auto-retried), which matters here because Perflo's CLI has no idempotency-key flag, so a Retry click after a false `"failed"` would be a genuine second real payment against money that already moved once.
+
+**Read `docs/DECISIONS.md`'s entry titled "Fixed: post-payment persistence-write failure was misclassified as 'failed', never 'unknown_outcome'"** for the full technical reasoning, exact line references, and FR-27 citation — this section is the narrative/status version.
+
+**Why did it this way, for the next session's benefit:**
+- **Verified the review's claim against the real code before changing anything** — read `executePreparedPayment` line by line, confirmed the exact mechanism (the `catch` block's `err instanceof PaymentUnknownOutcomeError` check can never be true for a generic Postgres error thrown by the very next line after payment success), and confirmed FR-27's actual PRD wording (`docs/PRD_PERFLO_AP_AGENT_V0.md:248`) says "unknown result → `unknown_outcome`, ... never retried" — not paraphrased from the task's own description.
+- **Test-first**: no test file existed for this module at all. Wrote `worker/src/payment-execution.test.ts` mocking `./manual-pay` and `@perflo-ap-agent/db` (matching this codebase's existing `vi.mock` style from `payee-approval-deps.enable-grant.test.ts`), confirmed it failed for the exact right reason (`expected 'failed' to be 'unknown_outcome'`) before writing the fix, then confirmed green.
+- **Fix kept to the smallest change the bug required** (checked via `/ponytail-review`: "Lean already. Ship."): one new variable (`paidReference`, set the moment the payment call resolves), and two one-line changes to the `catch` block's status/providerReference computation. No restructuring, no new abstraction, no second try/catch block.
+- **Explicitly did not fold in the review's other three findings** (`perflo-cli.ts` unreconcilable references, `payment-claim.ts` permanently-stuck claimed rows, `payment-reconcile.ts`/`app/app/actions.ts` post-claim mutation with no status guard) — each is a separate, larger change per the task's own instruction, confirmed via `git diff --stat` showing zero lines touched in any of `perflo-cli.ts`, `manual-pay.ts`, `payment-claim.ts`, `payment-reconcile.ts`, `app/app/actions.ts`, `app/app/payment-cell.tsx`.
+- **Ran `/payment-review`'s checklist against the fix**, honestly noting where it couldn't be fully satisfied: the checklist requires an independent (separate-session) reviewer, which this single session cannot provide — stated as a limitation rather than glossed over. All five required scenarios (success, pre-payment definite failure, pre-payment unknown-outcome, retry-after-failure, concurrent claim) were traced and confirmed unchanged except the one new case this fix addresses. Also explicitly checked whether the fallback `updateMany` call being unguarded (no try/catch of its own) is a new regression — confirmed via `git diff` it was already unguarded before this change; not something this fix introduced.
+
+**Verification actually performed, not just claimed:**
+- `npx vitest run worker/src/payment-execution.test.ts --no-file-parallelism` before the fix: red, `expected 'failed' to be 'unknown_outcome'`. After the fix: green, `1 passed`.
+- `npx tsc --noEmit -p worker/tsconfig.json`: clean, no errors.
+- `pnpm test` (full suite) after the fix: `4 failed | 333 passed (337)` — the same 4 pre-existing, already-documented failures from the prior session's env-leak/lock-race work (unrelated stray-data issue), the new test passing among the 333.
+- `git diff --stat`: exactly `worker/src/payment-execution.ts` and new `worker/src/payment-execution.test.ts` changed; zero lines anywhere in the six off-limits files.
+- Nothing committed — reporting back for verification per the task's explicit instruction.
 
 ## Session summary — 2026-09-05, later the same day (test-suite non-determinism fixed: env-var leak + the real grant-approval lock race)
 
@@ -882,3 +902,43 @@ Findings, ranked by severity (only this handoff and `docs/DECISIONS.md` were app
 5. **Medium — raw provider/process output crosses into persistent UI-visible errors and logs.** `worker/src/perflo-cli.ts:53-58,90-96,183-190` constructs errors from raw output; `worker/src/payment-execution.ts:52-58` stores it, `app/app/payment-cell.tsx:138-144` renders it verbatim, and `worker/src/payment-execution.ts:60-64` logs the full error. This can expose references, approval/session URLs, or diagnostic payloads.
 
 Verification: branch `feat/perflo-beneficiary-approval`, HEAD `1b9db99`. Focused Vitest run covered Perflo classification, executor adapter, manual-pay, claim, and reconcile tests. Four unit files passed (33 tests). The two real-Postgres suites failed during setup/cleanup because the database was unreachable, blocking all 11 claim/reconciliation integration tests. No `worker/src` or `app/app` files were edited.
+
+## Session summary — 2026-09-05 (Comprehensive smoke test & UI verification: review queue, drawer, payee registry, and guardrails)
+
+**What this session did, in one sentence:** performed a full, end-to-end browser smoke test across both application routes (`/` and `/payees`) with real browser automation and visual verification, confirming all 4 review queue tabs, slide-out Review Drawer, inline payment preparation, masked rails, client form validation, and the one-pending-grant guardrail lock without modifying any off-limits worker or test files.
+
+**Verification results per area:**
+1. **Scope & Routing Discovery**: Confirmed that `app/app/` contains exactly two routes: `/` (Review Queue) and `/payees` (Payee Registry & Setup). Non-queue pages (e.g. `/dashboard`, `/settings`) do not exist by design, adhering strictly to the Brex/Ramp high-density enterprise queue pattern.
+2. **Review Queue Navigation & Tabs (`/`)**:
+   - Tested all 4 KPI metric cards and tabs: "Needs approval" (16), "Paid / settled" (2), "Quarantined" (4), and "Other / all" (50).
+   - Confirmed instant client-side tab switching with zero page reloads.
+   - Verified that "Paid / settled" cards display completed transaction references (e.g. `pout_TWKK7nZcAxmznX`) with review-time warnings omitted.
+   - Verified that "Quarantined" items display dark `quarantine` badges and explicit verifier hard-fail warning pills (`Verifier hard fail: prompt_injection`).
+3. **Slide-Out Review Drawer Pattern**:
+   - Opened drawer on `Invoice TEST-02` (`Apex Logistics`).
+   - Verified all sections: Original email in secure plain-text (remote images blocked), Attachments list (0 files), Extracted payment details with confidence metrics (Payee: Apex Logistics 100%, Amount: INR 650.00 95%), Verifier evidence with state pills, Duplicate check, Policy decision, Timeline, and sticky footer review actions ("Approve for review", "Reject", "Mark not an invoice", "Retry processing").
+   - Confirmed `Escape` key close traps and cleanly restores focus.
+4. **Payment Preparation Inline Expand**:
+   - Expanded "Prepare payment ˅" on `Invoice TEST-02`: prefilled `demo-apex-logistics` and `650.00` with "Prepare →" and "Cancel" buttons fitting neatly in the action column.
+5. **Payee Registry & Sensitive Rail Masking (`/payees`)**:
+   - Confirmed existing payees render with proper statuses: `Test Auto-Pay Vendor` (`approved` sage badge) and `Test Vendor QA` (`approval denied` neutral badge).
+   - Verified rail masking: UPI renders as `••••@okaxis`; Bank/NEFT renders as `••••••7890 · HDFC0001234`. Zero plaintext bank credentials or VPAs exist in client DOM.
+6. **"Add Payee" Validation & Guardrail Lock Walkthrough**:
+   - Empty submission immediately surfaces inline errors on all required inputs.
+   - Malformed emails, non-positive caps, zero caps, and invalid account/IFSC values are blocked client-side.
+   - Ticking all valid fields while leaving the owner confirmation checkbox unchecked halts submission with `"Confirm the payee approval before submitting."`.
+   - Verified the one-pending-grant guardrail: initiating grant approval transitions payee to `waiting for approval` (`Starting the approval request...`) and dynamically disables the "Add payee" button with `"An approval is already in progress for Test Vendor QA — Perflo only allows one at a time."`. Once settled, the lock releases cleanly.
+
+**Artifacts captured:**
+- `smoke_queue_needs_approval_1788588729416.png`
+- `smoke_queue_paid_1788588743079.png`
+- `smoke_queue_quarantine_1788588762535.png`
+- `smoke_queue_all_activity_1788588780277.png`
+- `smoke_review_drawer_open_1788588708993.png`
+- `smoke_prepare_payment_expanded_1788588809154.png`
+- `smoke_payees_page_overview_1788588894781.png`
+- `smoke_payees_list_cards_1788590134605.png`
+- `smoke_payee_empty_validation_1788588961886.png`
+- `smoke_payee_invalid_formats_validation_1788589101932.png`
+- `smoke_payee_unconfirmed_validation_1788589346243.png`
+- `smoke_payee_created_success_1788589880939.png`
