@@ -184,13 +184,13 @@ describe("createPayeeAction — never touches payment execution", () => {
 });
 
 describe("replaceRailAction / revokeRailAction — same execution boundary", () => {
-  it("replaces a rail only with owner confirmation, and never creates a PaymentIntent", async () => {
+  it("blocks rail replacement until the real Perflo beneficiary is re-registered and re-approved", async () => {
     await createPayeeAction(baseFormData());
     const identity = await prisma.payeeIdentity.findUniqueOrThrow({ where: { senderAddr } });
     await waitUntilGrantSettled(identity.payeeId);
     const method = await prisma.payeePaymentMethod.findFirstOrThrow({ where: { payeeId: identity.payeeId } });
 
-    await replaceRailAction((() => {
+    await expect(replaceRailAction((() => {
       const fd = new FormData();
       fd.set("oldMethodId", method.id);
       fd.set("ownerConfirmed", "on");
@@ -199,10 +199,11 @@ describe("replaceRailAction / revokeRailAction — same execution boundary", () 
       fd.set("accountNumber", "");
       fd.set("ifsc", "");
       return fd;
-    })());
+    })())).rejects.toThrow(/new Perflo beneficiary and obtain a new approval/);
 
     const oldRow = await prisma.payeePaymentMethod.findUniqueOrThrow({ where: { id: method.id } });
-    expect(oldRow.status).toBe("replaced");
+    expect(oldRow.status).toBe("active");
+    expect(await prisma.payeePaymentMethod.count({ where: { payeeId: identity.payeeId } })).toBe(1);
   });
 
   it("revokes a rail only with owner confirmation", async () => {

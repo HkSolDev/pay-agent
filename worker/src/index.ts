@@ -1,6 +1,8 @@
 import "dotenv/config";
 import { razorpayExecutorFromEnv, reconcileStuckPayments } from "./payment-reconcile.js";
 import { reconcileStuckGrantApprovals } from "./reconcile-grant-approvals.js";
+import { warnAboutExpiringGrants } from "./grant-expiry-warning.js";
+import { sendDailyDigest } from "./daily-digest.js";
 import { syncOnce } from "./sync.js";
 import { isSyncPaused } from "./sync-state.js";
 
@@ -53,11 +55,19 @@ async function pollOnce() {
   // inline check in payee-approval-deps.ts's startPendingGrant.
   try {
     const { checked, expired } = await reconcileStuckGrantApprovals();
+    const warned = await warnAboutExpiringGrants();
     if (expired > 0) {
       console.log(`[reconcile] checked ${checked} pending grant approval(s), expired ${expired}`);
     }
+    if (warned > 0) console.log(`[notify] sent ${warned} grant expiry warning(s)`);
   } catch (err) {
     console.error("[reconcile] grant approval reconciliation failed, will retry next tick:", err);
+  }
+
+  try {
+    if (await sendDailyDigest()) console.log("[notify] sent daily digest");
+  } catch (err) {
+    console.error("[notify] daily digest failed, will retry next tick:", err);
   }
 }
 
@@ -76,7 +86,9 @@ async function main() {
   // expired while nobody was looking" case specifically).
   try {
     const { checked, expired } = await reconcileStuckGrantApprovals();
+    const warned = await warnAboutExpiringGrants();
     console.log(`[reconcile] startup: checked ${checked} pending grant approval(s), expired ${expired}`);
+    if (warned > 0) console.log(`[notify] startup sent ${warned} grant expiry warning(s)`);
   } catch (err) {
     console.error("[reconcile] startup grant approval reconciliation failed:", err);
   }

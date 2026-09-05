@@ -81,22 +81,29 @@ describe("Payee rail lifecycle — replace and revoke, real Postgres", () => {
     expect(stored.status).toBe("active");
   });
 
-  it("replaces a rail: old row marked replaced and linked, new row active", async () => {
+  it("blocks a real bank-detail replacement until Perflo beneficiary and grant reapproval are wired", async () => {
     const oldMethodId = await seedPayeeWithUpiRail();
-    const result = await replacePaymentRail({
+
+    await expect(replacePaymentRail({
+      oldMethodId,
+      ownerConfirmed: true,
+      newMethod: { kind: "bank_neft", accountNumber: "5010023456789", ifsc: "HDFC0001234" },
+    })).resolves.toEqual({ status: "beneficiary_reapproval_required" });
+
+    const payee = await prisma.payee.findUniqueOrThrow({ where: { id: payeeId } });
+    expect(payee.recipientNickname).toBe("rail-lifecycle-perflo");
+    expect(await prisma.payeePaymentMethod.count({ where: { payeeId } })).toBe(1);
+    expect(await prisma.payeePaymentMethod.findUniqueOrThrow({ where: { id: oldMethodId } })).toMatchObject({ status: "active" });
+  });
+
+  it("blocks a UPI replacement too, rather than changing only local invoice matching", async () => {
+    const oldMethodId = await seedPayeeWithUpiRail();
+    await expect(replacePaymentRail({
       oldMethodId, ownerConfirmed: true, newMethod: { kind: "upi", vpa: "rail-lifecycle-owner-new@okaxis" },
-    });
-    expect(result.status).toBe("replaced");
-    if (result.status !== "replaced") throw new Error("unreachable");
+    })).resolves.toEqual({ status: "beneficiary_reapproval_required" });
 
     const oldRow = await prisma.payeePaymentMethod.findUniqueOrThrow({ where: { id: oldMethodId } });
-    expect(oldRow.status).toBe("replaced");
-    expect(oldRow.replacedAt).not.toBeNull();
-    expect(oldRow.replacedByMethodId).toBe(result.newMethodId);
-
-    const newRow = await prisma.payeePaymentMethod.findUniqueOrThrow({ where: { id: result.newMethodId } });
-    expect(newRow.status).toBe("active");
-    expect(newRow.payeeId).toBe(payeeId);
-    expect(Buffer.from(newRow.encryptedPayload).toString("utf8")).not.toContain("rail-lifecycle-owner-new@okaxis");
+    expect(oldRow.status).toBe("active");
+    expect(await prisma.payeePaymentMethod.count({ where: { payeeId } })).toBe(1);
   });
 });

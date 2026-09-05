@@ -1,12 +1,11 @@
 import { prisma } from "@perflo-ap-agent/db";
-import { encryptPaymentMethod, hashPaymentMethod, toPrismaBytes } from "./payee-crypto";
-import { normalizePaymentMethod, validatePaymentMethod, type PaymentMethod } from "./payment-method-validation";
+import { validatePaymentMethod, type PaymentMethod } from "./payment-method-validation";
 
 // Rails are never overwritten in place. Revoking marks a row `revoked` and
-// stamps `revokedAt`; replacing creates a brand-new `active` row and marks
-// the old one `replaced`, linked via `replacedByMethodId` — so the full
-// created/approved/replaced/revoked history is always queryable per payee,
-// and a stale rail can never quietly keep resolving invoices.
+// stamps `revokedAt`; a safe replacement will create a brand-new `active` row
+// and mark the old one `replaced`, linked via `replacedByMethodId`. Until the
+// corresponding Perflo beneficiary + grant handoff exists, replacement is
+// refused rather than creating a local-only history that misroutes payments.
 
 export interface RevokeRailInput {
   methodId: string;
@@ -40,6 +39,7 @@ export type ReplaceRailResult =
   | { status: "confirmation_required" }
   | { status: "invalid_method" }
   | { status: "not_found" }
+  | { status: "beneficiary_reapproval_required" }
   | { status: "replaced"; newMethodId: string };
 
 export async function replacePaymentRail(input: ReplaceRailInput): Promise<ReplaceRailResult> {
@@ -49,23 +49,12 @@ export async function replacePaymentRail(input: ReplaceRailInput): Promise<Repla
   const old = await prisma.payeePaymentMethod.findUnique({ where: { id: input.oldMethodId } });
   if (!old) return { status: "not_found" };
 
-  const normalized = normalizePaymentMethod(input.newMethod);
-  if (!normalized) return { status: "invalid_method" };
-  const canonical = normalized.kind === "upi"
-    ? `upi:${normalized.vpa}`
-    : `bank_neft:${normalized.accountNumber}:${normalized.ifsc}`;
-
-  const created = await prisma.payeePaymentMethod.create({
-    data: {
-      payeeId: old.payeeId,
-      rail: normalized.kind,
-      encryptedPayload: toPrismaBytes(encryptPaymentMethod(canonical)),
-      lookupHash: hashPaymentMethod(canonical),
-    },
-  });
-  await prisma.payeePaymentMethod.update({
-    where: { id: old.id },
-    data: { status: "replaced", replacedAt: new Date(), replacedByMethodId: created.id },
-  });
-  return { status: "replaced", newMethodId: created.id };
+  // A rail replacement changes the real payout destination, not just the
+  // local invoice-matching key. Perflo has no beneficiary-edit command: the
+  // safe path is to add a new beneficiary, obtain a new beneficiary-specific
+  // policy approval, then activate the new local rail and nickname together.
+  // Until that transaction is implemented, refusing here is safer than
+  // marking the local row replaced while payments still target the old
+  // Perflo nickname (or an unapproved new one).
+  return { status: "beneficiary_reapproval_required" };
 }

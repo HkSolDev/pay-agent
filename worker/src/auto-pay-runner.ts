@@ -6,6 +6,7 @@ import { prisma } from "@perflo-ap-agent/db";
 import { attemptAutoPay } from "./auto-pay-gate";
 import type { PolicyDecision } from "./policy-engine.js";
 import { executePreparedPayment } from "./payment-execution";
+import { runPaidVerifierForEmail } from "./paid-verification";
 
 /**
  * Runs after Level 1 writes a `policyDecision` of "auto_pay" for an email
@@ -37,6 +38,11 @@ export async function runAutoPayIfEligible(input: {
   // over, it's exactly the case the queue's existing Failed/Uncertain pills
   // already handle.
   try {
+    const paidVerification = await runPaidVerifierForEmail(input.emailId);
+    if (paidVerification.paid.status !== "verified") {
+      console.warn(`[auto-pay] ${input.emailId}: paid verifier is unverified; leaving the invoice for owner approval`);
+      return;
+    }
     await attemptAutoPay(
       { mode: process.env.AUTO_PAY_MODE === "on" ? "on" : "off", policyDecision: input.policyDecision, emailId: input.emailId },
       {

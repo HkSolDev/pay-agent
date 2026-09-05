@@ -3,6 +3,7 @@ import {
   buildBeneficiaryAddArgs,
   buildGrantEnableArgs,
   classifyBeneficiaryAddStdout,
+  classifyPerfloActivityStdout,
   classifyPerfloStdout,
   classifyPerfloTxStatusStdout,
   extractApproveUrl,
@@ -19,6 +20,26 @@ describe("classifyPerfloTxStatusStdout", () => {
     ["executing", "processing"],
   ] as const)("maps Perflo tx status %s to payout status %s", (status, expected) => {
     expect(classifyPerfloTxStatusStdout("0xabc123", JSON.stringify({ ok: true, txHash: "0xabc123", status }))).toMatchObject({
+      providerReference: "0xabc123",
+      status: expected,
+    });
+  });
+});
+
+describe("classifyPerfloActivityStdout", () => {
+  it.each([
+    ["success", "paid"],
+    ["failed", "failed"],
+    ["processing", "processing"],
+  ] as const)("maps payout ID activity status %s to payout status %s", (activityStatus, expected) => {
+    const payoutId = "pout_TW4UaGrktdcx23";
+    const stdout = JSON.stringify({
+      ok: true,
+      money: [{ id: payoutId, type: "payout", status: activityStatus, txHash: "0xabc123" }],
+      agent: { transactions: [] },
+    });
+
+    expect(classifyPerfloActivityStdout(payoutId, stdout)).toMatchObject({
       providerReference: "0xabc123",
       status: expected,
     });

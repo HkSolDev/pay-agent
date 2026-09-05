@@ -60,17 +60,38 @@ model Email {
   resolvedPayeeId String?    @map("resolved_payee_id")
   payeeResolution Json?      @map("payee_resolution")
   verificationResult Json?   @map("verification_result")
+  x402BudgetMinor Int?       @map("x402_budget_minor")
+  x402SpentMinor  Int        @default(0) @map("x402_spent_minor")
   duplicateResult Json?      @map("duplicate_result")
   policyDecision String?     @map("policy_decision")
   policyReasons String[]     @default([]) @map("policy_reasons")
   level1ProcessedAt DateTime? @map("level1_processed_at")
   reviewStatus String? @map("review_status")
   reviewedAt DateTime? @map("reviewed_at")
+  newPayeeApprovalEmailSentAt DateTime? @map("new_payee_approval_email_sent_at")
+  quarantineAlertSentAt       DateTime? @map("quarantine_alert_sent_at")
+
+  x402Spends X402Spend[]
 
   gmailLabels String[] @map("gmail_labels")
   ingestedAt  DateTime @default(now()) @map("ingested_at")
 
   @@map("emails")
+}
+
+model X402Spend {
+  id               String   @id @default(cuid())
+  emailId          String   @map("email_id")
+  email            Email    @relation(fields: [emailId], references: [id])
+  tool             String
+  costMinor        Int      @map("cost_minor")
+  settlementStatus String   @map("settlement_status")
+  txHash           String?  @map("tx_hash")
+  resultHash       String?  @map("result_hash")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@index([emailId, createdAt])
+  @@map("x402_spend")
 }
 
 // Single-row table (id is always 1): the worker's "since" pointer, durable
@@ -86,6 +107,8 @@ model IngestCheckpoint {
   // on this single-row table rather than a new one since it's the same
   // "where sync currently stands" concept the checkpoint already tracks.
   paused            Boolean  @default(false)
+  digestHour        Int      @default(9) @map("digest_hour")
+  lastDigestSentAt  DateTime? @map("last_digest_sent_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
   @@map("ingest_checkpoint")
@@ -177,6 +200,7 @@ model Payee {
   grantTotalCapInr      String?   @map("grant_total_cap_inr")
   grantMaxPayments      Int?      @map("grant_max_payments")
   grantExpiresAt        DateTime? @map("grant_expires_at")
+  grantExpiryWarningSentAt DateTime? @map("grant_expiry_warning_sent_at")
 
   // Per-payee opt-in for FR-18/FR-19's `auto_pay` decision to actually
   // execute (see worker/src/auto-pay-gate.ts). Off by default: approving a

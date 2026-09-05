@@ -13,6 +13,7 @@
     "demo:inbox": "tsx worker/src/demo-inbox.ts",
     "demo:payees": "tsx worker/src/demo-payees.ts",
     "connect-gmail": "tsx worker/src/connect-gmail.ts",
+    "perflo:setup": "tsx worker/src/perflo-setup.ts",
     "test": "vitest run"
   },
   "devDependencies": {

@@ -6,6 +6,7 @@ import { decidePolicy, applyCurrencyGuard, type PolicyDecision } from "./policy-
 import { resolvePayee, type ApprovedPayee, type ResolveResult } from "./payee-resolver.js";
 import { verifyEmail, type VerificationResult } from "./verifier.js";
 import { computeGrantStatus, amountWithinOwnerCeiling, amountAboveMinimum, type PayeeUsage } from "./auto-pay-eligibility.js";
+import type { PaidVerifierInput, PaidVerifierResult } from "./x402-verifier.js";
 
 export interface Level1PipelineInput {
   emailId: string;
@@ -22,6 +23,7 @@ export interface Level1PipelineInput {
   // Postgres. Defaults to "nothing used yet" for callers (existing tests)
   // that don't care about auto-pay at all.
   loadPayeeUsage?: (recipientNickname: string) => Promise<PayeeUsage>;
+  paidVerification?: (input: PaidVerifierInput) => Promise<PaidVerifierResult>;
 }
 
 export interface Level1PipelineResult {
@@ -99,6 +101,17 @@ export async function processLevel1(
     links: input.links,
     injectionDetected: input.classification.injectionDetected,
   });
+  if (input.paidVerification) {
+    const paid = await input.paidVerification({
+      emailId: input.emailId,
+      fromAddr: input.extractionInput.fromAddr ?? "",
+      links: input.links,
+      isNewPayee: input.approvedPayees.every((payee) => payee.senderAddr.toLowerCase() !== (input.extractionInput.fromAddr ?? "").toLowerCase()),
+      amountAboveOwnerThreshold: false,
+    });
+    verification.unverified = paid.status === "unverified";
+    verification.paidChecks = paid;
+  }
   const resolution: ResolveResult = extraction.paymentMethods.length === 1
     ? resolvePayee({ senderAddr: input.extractionInput.fromAddr ?? "", paymentMethod: extraction.paymentMethods[0], allowAnySender: process.env.DEMO_MODE === "true" }, input.approvedPayees)
     : extraction.paymentMethods.length > 1 ? { status: "multiple_payment_methods" } : { status: "new_payee" };

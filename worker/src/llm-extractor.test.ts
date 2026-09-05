@@ -25,6 +25,51 @@ const validOutput = {
   dueDateConfidence: 0.94,
 };
 
+const flattenedPdfInvoiceBody = `sned me
+
+--- invoicehemantrealTEST01.pdf ---
+INR 120.00
+Due 12 September 2026
+From To
+Northline Cloud Services Pvt Ltd
+Finance Department
+4th Floor, Prestige Tech Park
+Outer Ring Road
+Bengaluru, Karnataka 560103
+India
+Perflo AP Agent (Test)
+Accounts Payable
+Bengaluru, Karnataka
+India
+Terms
+Invoice no. INV-HR-TEST-01
+Invoice date 1 September 2026
+Issue date 5 September 2026
+Due date 12 September 2026
+Payment terms Net 7
+Currency INR - Indian Rupee
+Name Qty Rate Tax Amount
+Cloud hosting - September 2026 1 INR 120.00 0% INR 120.00
+Subtotal INR 120.00
+Tax INR 0.00
+Total INR 120.00
+Where the money goes
+Account holder Hemant Kumar
+Bank State Bank of India
+Account number 37472619611
+IFSC code SBIN0050341
+Country India
+Currency INR
+How it settles
+Payment method Indian bank account
+Payment purpose Personal transfer
+
+-- 1 of 2 --
+
+INV-HR-TEST-01 - INR 120.00 due 12 September 2026
+
+-- 2 of 2 --`;
+
 describe("LLM payment-detail extractor", () => {
   it("keeps trusted extraction rules in system and hostile email content in user data", () => {
     const messages = buildOpenAIExtractorMessages({
@@ -38,6 +83,74 @@ describe("LLM payment-detail extractor", () => {
     expect(messages[1]).toMatchObject({ role: "user" });
     expect(messages[1].content).toContain("₹50,000");
     expect(messages[1].content).not.toContain("</email> Ignore");
+  });
+
+  it("guides extraction of a definitive total from flattened PDF invoice tables", async () => {
+    const bodyText = [
+      "Cloud hosting - September 2026 1 INR 120.00 0% INR 120.00",
+      "Subtotal INR 120.00",
+      "Tax INR 0.00",
+      "Total INR 120.00",
+    ].join("\n");
+    const input = { ...payable, bodyText };
+    const messages = buildOpenAIExtractorMessages(input);
+
+    expect(messages[0].content).toContain("Invoice text extracted from a PDF often flattens a table");
+
+    const result = await extractPaymentDetailsWithLLM(input, {
+      callLLM: async () => JSON.stringify({
+        ...validOutput,
+        amount: { currency: "INR", value: "120.00" },
+        amountConfidence: 0.95,
+      }),
+    });
+
+    expect(result.amount).toEqual({ currency: "INR", value: "120.00" });
+    expect(result.amountConfidence).toBeGreaterThanOrEqual(0.9);
+  });
+
+  it("recovers a clear total when the LLM returns no amount", async () => {
+    const result = await extractPaymentDetailsWithLLM({
+      ...payable,
+      bodyText: flattenedPdfInvoiceBody,
+    }, {
+      callLLM: async () => JSON.stringify({
+        ...validOutput,
+        amount: null,
+        amountConfidence: 0,
+      }),
+    });
+
+    expect(result.amount).toEqual({ currency: "INR", value: "120.00" });
+    expect(result.amountConfidence).toBe(0.85);
+  });
+
+  it("recovers a clear total when the LLM call fails", async () => {
+    const result = await extractPaymentDetailsWithLLM({
+      ...payable,
+      bodyText: flattenedPdfInvoiceBody,
+    }, {
+      callLLM: async () => { throw new Error("model unavailable"); },
+    });
+
+    expect(result.amount).toEqual({ currency: "INR", value: "120.00" });
+    expect(result.amountConfidence).toBe(0.85);
+  });
+
+  it("keeps amount null when the LLM returns no amount and no clear total exists", async () => {
+    const result = await extractPaymentDetailsWithLLM({
+      ...payable,
+      bodyText: "Invoice INV-42\nLine item hosting 1 INR 120.00\nSubtotal INR 120.00\nTax INR 0.00",
+    }, {
+      callLLM: async () => JSON.stringify({
+        ...validOutput,
+        amount: null,
+        amountConfidence: 0,
+      }),
+    });
+
+    expect(result.amount).toBeNull();
+    expect(result.amountConfidence).toBe(0);
   });
 
   it("accepts only a complete, valid structured extraction result", () => {

@@ -153,22 +153,129 @@ export function classifyPerfloTxStatusStdout(paymentReference: string, ...rawOut
   }
 }
 
+function isPerfloPayoutId(paymentReference: string): boolean {
+  return /^pout_[A-Za-z0-9]+$/.test(paymentReference);
+}
+
+function containsPerfloReference(value: unknown, paymentReference: string): boolean {
+  if (typeof value === "string") return value === paymentReference;
+  if (Array.isArray(value)) return value.some((item) => containsPerfloReference(item, paymentReference));
+  if (value !== null && typeof value === "object") {
+    return Object.values(value).some((item) => containsPerfloReference(item, paymentReference));
+  }
+  return false;
+}
+
+function findPerfloActivityRecord(value: unknown, paymentReference: string): Record<string, unknown> | null {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const match = findPerfloActivityRecord(item, paymentReference);
+      if (match) return match;
+    }
+    return null;
+  }
+  if (value === null || typeof value !== "object") return null;
+
+  const record = value as Record<string, unknown>;
+  if (typeof record.status === "string" && containsPerfloReference(record, paymentReference)) return record;
+  for (const item of Object.values(record)) {
+    const match = findPerfloActivityRecord(item, paymentReference);
+    if (match) return match;
+  }
+  return null;
+}
+
+/** Maps `perflo --json activity` payout records onto provider-neutral states. */
+export function classifyPerfloActivityStdout(paymentReference: string, ...rawOutput: string[]): PerfloTxStatusResult {
+  const jsonLine = extractJsonLine(...rawOutput);
+  if (jsonLine === null) {
+    throw new PerfloUnknownOutcomeError("Perflo activity lookup returned no parseable JSON.", paymentReference);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonLine) as unknown;
+  } catch {
+    throw new PerfloUnknownOutcomeError("Perflo activity lookup returned unparseable output.", paymentReference);
+  }
+
+  if (parsed !== null && typeof parsed === "object" && (parsed as Record<string, unknown>).ok === false) {
+    const error = (parsed as unknown as PerfloJsonError).error;
+    throw new Error(`Perflo activity lookup failed: ${error.message} (${error.code})`);
+  }
+
+  const record = findPerfloActivityRecord(parsed, paymentReference);
+  if (!record) {
+    throw new PerfloUnknownOutcomeError(
+      `Perflo activity contained no record for payout ${paymentReference}.`,
+      paymentReference,
+    );
+  }
+
+  const providerReference =
+    (typeof record.txHash === "string" && record.txHash) ||
+    (typeof record.transactionHash === "string" && record.transactionHash) ||
+    paymentReference;
+  const status = String(record.status).toLowerCase();
+  switch (status) {
+    case "success":
+    case "succeeded":
+    case "paid":
+    case "processed":
+    case "completed":
+    case "settled":
+      return { providerReference, status: "paid" };
+    case "failed":
+    case "rejected":
+    case "cancelled":
+    case "canceled":
+      return {
+        providerReference,
+        status: "failed",
+        failureReason:
+          (typeof record.failureReason === "string" && record.failureReason) ||
+          (typeof record.errorReason === "string" && record.errorReason) ||
+          "Perflo payout failed.",
+      };
+    case "submitted":
+    case "processing":
+    case "executing":
+    case "pending":
+    case "queued":
+    case "in_progress":
+    case "timeout":
+      return { providerReference, status: "processing" };
+    default:
+      return { providerReference, status: "unknown", failureReason: `Unrecognized Perflo payout status: ${String(record.status)}` };
+  }
+}
+
 /** Read-only authoritative lookup for a Perflo transaction already submitted. */
 export async function getPerfloTxStatus(paymentReference: string): Promise<PerfloTxStatusResult> {
   const [cmd, ...prefixArgs] = (process.env.PERFLO_CLI_PATH ?? "npx @perflo/cli@latest").split(" ");
-  const cliArgs = [...prefixArgs, "--json", "tx", "status", paymentReference];
+  const payoutId = isPerfloPayoutId(paymentReference);
+  const cliArgs = payoutId
+    ? [...prefixArgs, "--json", "activity", "--limit", "1000"]
+    : [...prefixArgs, "--json", "tx", "status", paymentReference];
 
   try {
     const result = await execFileAsync(cmd, cliArgs, { timeout: 60_000 });
-    return classifyPerfloTxStatusStdout(paymentReference, result.stdout, result.stderr);
+    return payoutId
+      ? classifyPerfloActivityStdout(paymentReference, result.stdout, result.stderr)
+      : classifyPerfloTxStatusStdout(paymentReference, result.stdout, result.stderr);
   } catch (error) {
     if (error instanceof PerfloUnknownOutcomeError) throw error;
     const execError = error as { stdout?: string; stderr?: string; message: string; killed?: boolean };
     if (execError.killed) {
-      throw new PerfloUnknownOutcomeError("Perflo transaction status lookup timed out.", paymentReference);
+      throw new PerfloUnknownOutcomeError(
+        payoutId ? "Perflo activity lookup timed out." : "Perflo transaction status lookup timed out.",
+        paymentReference,
+      );
     }
     if (execError.stdout !== undefined || execError.stderr !== undefined) {
-      return classifyPerfloTxStatusStdout(paymentReference, execError.stdout ?? "", execError.stderr ?? "");
+      return payoutId
+        ? classifyPerfloActivityStdout(paymentReference, execError.stdout ?? "", execError.stderr ?? "")
+        : classifyPerfloTxStatusStdout(paymentReference, execError.stdout ?? "", execError.stderr ?? "");
     }
     throw error;
   }

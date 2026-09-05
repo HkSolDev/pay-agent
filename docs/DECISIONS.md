@@ -679,3 +679,229 @@ TDD evidence: the first regression failed with expected `providerReference: "0xa
 
 Rather than introducing full user accounts, authentication tables, or external identity dependencies, the gate is implemented with a single Next.js middleware file (`app/middleware.ts`), a minimal login page (`app/app/login/page.tsx`), and a shared secret read from `APP_ACCESS_PASSWORD`. Authentication state is maintained using an HMAC-SHA256 signed session cookie (`perflo_access`) generated and verified via the standard Web Crypto API (`crypto.subtle`), ensuring full compatibility with Next.js Edge and Node runtimes without adding any npm packages. Unauthenticated visitors are redirected to `/login`, while authenticated sessions persist across page reloads and route navigations. If `APP_ACCESS_PASSWORD` is unset in an environment, the middleware passes requests through, preserving zero-friction local development while enforcing strict protection whenever the variable is configured.
 
+## New post-commit flakiness investigated: neither newly-added test file was the cause — the real gap was `payee-crypto.test.ts` itself, already fixed elsewhere while this investigation was in progress
+
+5 Sep 2026. Task: after the reconciliation fix, payment-guard fix, login gate, and docs commits landed, `pnpm test` run three times in a row reportedly gave 4, then 5, then 6 failures, with the extra ones showing the same `"Unsupported state or unable to authenticate data"` signature as the env-var-leak class of bug fixed earlier today. The two newly-added test files, `app/app/actions.test.ts` and `worker/src/payment-reconcile.unit.test.ts`, were named as suspects — check them for the same anti-pattern (mutating `PAYEE_ENCRYPTION_KEY`/`PAYEE_HASH_KEY` without save/restore, or leaving behind rows another test's table-wide scan could trip over).
+
+**Neither file has the anti-pattern.** Confirmed by direct grep and full read of both: `app/app/actions.test.ts` never references `PAYEE_ENCRYPTION_KEY` or `PAYEE_HASH_KEY` anywhere, and the one `Payee` row it creates has no identities, no payment methods, and `grantApproved` defaults to `false` — `loadApprovedPayees()`'s table-wide scan (the function every prior instance of this bug went through) would never touch it. `worker/src/payment-reconcile.unit.test.ts` imports no `prisma` at all, creates zero database rows, and its only `process.env` mutation is `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET`/`RAZORPAY_ACCOUNT_NUMBER`, already correctly saved at module load and restored in `afterEach` — an unrelated env var, not the crypto keys, and already following the correct pattern. The other two test files modified in the same commits (`worker/src/perflo-cli.test.ts`, `worker/src/payment-executor-perflo.test.ts`) were also checked for completeness (outside this task's edit scope, but worth ruling out) — neither references the crypto env vars or touches Postgres either.
+
+**Empirically confirmed via reproduction, not just code reading:** ran `pnpm test` 8 times consecutively — byte-identical `4 failed | 351 passed (355)` every time (the same pre-existing, already-documented `payee-store`/`demo-scenarios` stray-data issue, unrelated to any of this). Then ran `npx vitest run --no-file-parallelism` — the maximally adversarial condition, forcing every one of the ~55 test files into a single sequential process so any residual cross-file env leak would have nowhere to hide — still exactly the same 4 known failures, nothing new. This is strong evidence neither new file was ever the mechanism, regardless of how the description sounded.
+
+**The real cause, found while investigating:** `vitest.config.ts` changed on disk mid-investigation (another session's concurrent work, confirmed via `git diff HEAD -- vitest.config.ts` as a genuine, uncommitted, working-tree change — not authored by this task). It adds a second serialization group, `SHARED_PAYEE_CRYPTO_ENV_FILES` (`payee-crypto.test.ts`, `payee-rail-lifecycle.integration.test.ts`, `demo-scenarios.integration.test.ts`, `payee-store.integration.test.ts`), merged into the existing `SHARED_PENDING_GRANT_LOCK_FILES` group as one combined `SERIALIZED_FILES` list. The mechanism this fixes is subtly different from the original env-leak bug fixed earlier today: that fix (save-at-module-load, restore-in-`afterAll`) only prevents leakage *forward* to whichever file runs *next* in a shared worker — it does nothing to prevent two files' env mutations from **interleaving while both are mid-flight concurrently** in the same worker, which vitest's default file-level parallelism allows. `payee-crypto.test.ts` — the file this whole task cycle's earlier fix used as *the reference for the correct pattern* — uses a different key value (`"a"`/`"b"` vs. the other three files' `"c"`/`"d"`) and even deletes the var entirely in one of its own test cases; if its `beforeEach` or a deletion fires while `demo-scenarios.integration.test.ts` (say) has an in-flight `loadApprovedPayees()` Postgres round-trip awaiting a response, that call's `decryptPaymentMethod()` reads whatever `process.env.PAYEE_ENCRYPTION_KEY` happens to be *at that instant* — producing the exact intermittent `"Unsupported state or unable to authenticate data"` symptom, non-deterministically, depending on async scheduling. Serializing all four files together (not just the three that were already fixed) removes the possibility of that interleaving entirely, the same way `SHARED_PENDING_GRANT_LOCK_FILES` already did for the unrelated `pending_grant` database constraint.
+
+**No code change was made by this task.** `app/app/actions.test.ts`, `worker/src/payment-reconcile.unit.test.ts`, and `vitest.config.ts` are all in this task's editable-file list, but after the investigation above, none needed a change: the two named files never had the anti-pattern, and the actual fix (extending `vitest.config.ts`'s serialization list) was already present, correct, and verified working by the time this investigation concluded — re-applying it or duplicating the change would have been redundant. Per `/test-driven-development`'s own rule, no production or test code was written without a red test justifying it, and none of the hypothesized failure modes reproduced under even the most adversarial test conditions tried.
+
+**Verification, real output:** `pnpm test` run 5 consecutive times after confirming the `vitest.config.ts` fix was in place: **`4 failed | 351 passed (355)` all 5 times, byte-identical failure list** (`demo-scenarios.integration.test.ts` ×2, `payee-store.integration.test.ts` ×2 — now tagged `|shared-pending-grant-lock|` in the output, confirming they run under the new serialized project). This matches exactly the state already proven earlier today, before these last 4 commits landed — genuine determinism restored. `npx vitest run app/app/actions.test.ts worker/src/payment-reconcile.unit.test.ts --no-file-parallelism` in isolation: 9/9 pass.
+## x402 paid verifier checks use normalized capability guesses and a human-only setup flow
+
+5 Sep 2026. Added the standalone Perflo device authorization/mandate setup path and the per-invoice paid-check seam. The one-time setup is intentionally human-triggered: it starts `/cli/device/start`, prints the validated `https://app.perflo.ai` connect URL for Abhinav to open and approve, polls `/cli/device/poll`, verifies `/v1/identity` reports `actor_type: "customer"`, creates a `service_purchase` mandate, redeems the connect code, and stores the resulting credentials encrypted. The worker never opens or proxies the Perflo login page and never receives the customer token in its per-invoice path.
+
+The earlier wording that the live catalog confirmed `email_verify`/`browser`, that the email service's live price was $0.03, and that the browser service's live result was $0.10 was false. No device-auth flow has ever been run: it requires Abhinav to approve a link, and no Perflo credentials file exists anywhere on this machine. The capability names, service IDs, and $0.03/$0.10 prices are therefore placeholder/best-guess values chosen from the illustrative marketplace documentation in `docs/perflo_docs/agents__services.md`, not values confirmed against a real API response. They must be verified against real `GET /v1/service-capabilities` and `GET /v1/services` responses the first time the device-auth/mandate setup actually runs. Until then, the client's existing `services.find(...) ?? services[0]` fallback is the protection against a wrong guessed service ID; the client still validates the returned capability before service discovery and does not rely on a hard-coded capability ID alone.
+
+The per-invoice cap is passed as `max_price` on each catalogued purchase and tracked across the email and link checks in the paid verifier so the remaining budget is used for later checks rather than reset per call. Each outcome is written to the additive `x402_spend` table with `settlementStatus` and `txHash`; `Email.x402BudgetMinor`/`x402SpentMinor` were also added because the existing schema had neither PRD field. A completed response without a receipt is `unverified`, not a fabricated transaction. Empty balance, service failure, unavailable capability, over-budget quote, and any non-settled result all return `unverified`; the pipeline marks the verifier unverified and the policy engine routes it to `needs_approval`.
+
+Assumption: the currently selected `browser` service is the acceptable headless-browser implementation for Section 8.3 even though the PRD names `browse_web` and the illustrative marketplace documentation names Browserbase/Firecrawl/Puppeteer. No phone callback or reputation/company lookup was added. The paid callback is invoked only from the pre-payment/auto-pay seam and the owner-open Review Drawer action; normal ingest remains paid-check-free.
+
+## Payee creation: field-level error mapping and visual highlights for backend banking validation errors
+
+5 Sep 2026. When `createPayeeAction` submitted invalid bank details, Perflo's live CLI rejected the beneficiary registration with `invalid_destination_details`. Previously, `payee-form.tsx` only displayed this error as a generic banner at the bottom of the form without attributing it to the invalid inputs, confusing the user as to which fields failed validation.
+
+To provide clear, immediate UX feedback, `app/app/payee-form.tsx` was updated to inspect server error payloads and map them directly to field-level `errors` state (`accountNumber`, `ifsc`, `vpa`, `senderAddr`). In addition to rendering the specific error message directly beneath the faulty input (`<small className="field-error">`), the input borders dynamically turn red (`borderColor: #c0392b`). When the user starts editing any highlighted field, the field-specific error and red border clear immediately. Strictly contained to `app/app/payee-form.tsx` without modifying server or worker code.
+
+## x402 follow-up: corrected catalog status and wired only allowed paid-check triggers
+
+5 Sep 2026. Corrected the x402 decision entry above because its claims of live catalog confirmation and live prices were unsupported: the device-auth/mandate flow has never been human-approved and no Perflo credentials file exists on this machine. The capability names, service IDs, and prices are explicitly documented as placeholders/best guesses from the illustrative marketplace docs until the first real `GET /v1/service-capabilities` and `GET /v1/services` responses; the existing `services.find(...) ?? services[0]` fallback is called out as the interim protection against a wrong service-ID guess.
+
+Added `worker/src/paid-verification.ts` as the setup-aware persisted runner. It calls the existing `runPaidVerifierChecks` only when invoked by an allowed trigger, reuses stored evidence to avoid paying again for the same invoice, persists `verificationResult`/`paidChecks`, and records an unverified result without blocking the queue when setup is absent. Wired it into `preparePayment`, `confirmPayment`, the auto-pay pre-payment gate, and the existing `Review row`/Review Drawer open action. Normal ingest does not supply the Level 1 callback and does not run paid checks. Auto-pay stops before creating/executing a payment when paid checks are unverified; an explicit owner `Confirm & pay` remains an owner decision.
+
+## Independent verification: repeated `pnpm perflo:setup` 401s at `/v1/identity` are Perflo-side, not a bug in `perflo-device-auth.ts`/`perflo-setup.ts`
+
+5 Sep 2026. Task: independently check a conclusion already reached elsewhere — that 5 consecutive real `pnpm perflo:setup` failures (`verifyCustomerToken`'s `HTTP 401 authentication_required` from a freshly-issued, freshly-decoded, real-human-approved token) are a genuine Perflo platform bug, not our code. Asked to be skeptical rather than confirm by default, and specifically to check the raised-but-unconfirmed `aud: "perflo-rails"` hypothesis. No fresh `pnpm perflo:setup` run was made — nothing here needed a sixth burned approval click.
+
+**Caveat first, stated plainly:** the prior investigation's claim of having verified the flow "byte-for-byte against the LIVE docs... fetched directly, not the local dated mirror" could not be reproduced from here. Both `https://docs.perflo.ai/developers/get-started/authorize-device` and `https://docs.perflo.ai/llms.txt` returned an "Access Restricted — enter access code" page when fetched (`WebFetch`) in this session — no doc content was retrievable live at all. So this verification rests on `docs/perflo_docs/` (the local mirror) plus one live, unauthenticated `curl` probe of the real endpoint (below) — not a live fetch of the docs themselves. If the earlier claim of live-doc access was accurate, it used a channel unavailable here; either way, the local mirror and the code agree, and a real network probe corroborates connectivity, so the conclusion doesn't depend on resolving that discrepancy.
+
+**Code re-read against the mirrored docs, field by field, found no defect:** `startDeviceAuthorization` POSTs `{clientName, deviceName}` to `/cli/device/start` and requires `success === true` plus a `connectUrl` whose origin is `https://app.perflo.ai` before trusting it — matches `developers__get-started__authorize-device.md` steps 1–2 exactly, including the origin check the doc calls out explicitly. `pollDeviceAuthorization` waits `max(500, pollInterval)` ms, treats `expiresIn` as seconds for its deadline, backs off on `429` using `Retry-After` (falling back to 60s, matching the doc's documented rate-limit shape), and branches on all four `status` values (`pending`/`complete`/`denied`/`expired`) with no fifth case silently swallowed. On `complete` it requires exactly the six fields the doc's step 4 lists (`accessJwt`, `refreshToken`, `expiresAt`, `deviceId`, `email`, `walletAddress`) and never reads the doc's explicitly-deprecated `token` fallback field. `verifyCustomerToken` calls `GET /v1/identity` with only `Authorization: Bearer <accessJwt>` and checks `actor_type === "customer"` — identical to the doc's step-4 curl example and to the endpoint's own OpenAPI spec (`api-reference__identity__read-the-callers-verified-identity.md`), which requires no header or parameter beyond `BearerAuth`. `DEFAULT_BASE_URL` (`https://api-gateway.perflo.ai`) matches every server URL in the mirrored OpenAPI docs and there is no `PERFLO_API_BASE_URL`-style override in `.env`; `DEMO_MODE=true` (also set in `.env`) only affects `level1-pipeline.ts`'s sender-address resolution and is never read by `perflo-device-auth.ts` or `perflo-setup.ts`, so it's not a factor here.
+
+**`/v1/identity` is confirmed to be the correct, connection-independent verification endpoint, not a wrong downstream/wrong-base-URL guess.** `developers__get-started__connect-perflo.md` explicitly lists `GET /v1/identity` (alongside `/v1/public-config`, `/v1/onboarding`, and the `/v1/perflo-connections*` pair) as one of the routes that "answer without" a gateway connection, "because nothing could be connected before they run." That rules out the theory that `/v1/identity` needs the *separate* gateway-device link described in that same doc (a customer token alone is sufficient for it) and rules out a sandbox/versioned-path variant — the mirrored docs and OpenAPI spec show exactly one base URL (`https://api-gateway.perflo.ai`) and one path (`/v1/identity`) anywhere in the corpus; nothing resembling a `/v2/` or staging variant exists.
+
+**Live network probe (safe: no real token used, just confirms transport):** `curl -D - https://api-gateway.perflo.ai/v1/identity -H "authorization: Bearer test"` returns `HTTP/2 401` directly from `cloudflare`/`railway`, no redirect, `content-type: application/problem+json`, in the same `type`/`title`/`status`/`detail`/`instance`/`code`/`request_id`/`retryable` shape as the real failure reported. This rules out a redirect silently stripping the `Authorization` header (a real failure mode for naive HTTP clients) and confirms the endpoint is reachable and behaves consistently — the identical error shape from a known-garbage token and from the real, freshly-issued one is expected either way, so this doesn't itself distinguish the two, but it does rule out a networking/proxy explanation entirely.
+
+**The `aud: "perflo-rails"` hypothesis is plausible and, more importantly, is not something our code can influence either way.** `developers__concepts__identity.md` states outright: "The gateway validates its signature, issuer, audience, subject, wallet claim, and issue time" for a customer principal — so an audience mismatch is a documented, real way to fail this exact check, and the generic `"invalid or expired"` wording doesn't rule it out (that phrasing covers signature/audience/issuer failures too, not literally only clock expiry). Nothing in the mirrored docs, the OpenAPI spec, or anywhere else in `docs/perflo_docs/` (grepped for `aud`, `audience`, `perflo-rails`) documents what `aud` value a customer token is supposed to carry, or exposes any client-settable parameter that would let our code request one — `startDeviceAuthorization`'s request body is only `{clientName, deviceName}`, and `pollDeviceAuthorization`'s is only `{sid}`. The `aud` claim is minted by Perflo's own device-issuance backend and checked by Perflo's own gateway; both ends of that comparison are entirely internal to Perflo. If they disagree, that is unambiguously a defect in how Perflo's own services agree with each other, not something reachable from an integrator's request shape — supporting, independently, the same "Perflo platform issue" conclusion, on different grounds than the audience value itself being expected or normal (which nothing available here confirms either way).
+
+**Conclusion: independently confirmed — this is Perflo's platform, not our code.** No defect was found in the request construction, headers, parsing, endpoint choice, or base URL, all checked directly against the mirrored docs and the endpoint's own OpenAPI schema rather than assumed. **One real, separate, minor issue noticed but deliberately not changed:** `verifyCustomerToken`'s retry loop (`worker/src/perflo-device-auth.ts:120-138`) retries up to 3 times on any non-OK response without checking the `retryable` field in the `ProblemDetails` body — and the actual failure already carries `"retryable":false`. Perflo's own response is telling the caller not to retry, and the existing code retries anyway. This wastes ~4.5s per setup attempt but does not explain or fix the underlying 401, so per this task's scope (verify the platform-bug conclusion; fix only a bug that actually explains the failures) it was left alone rather than changed — flagging it here rather than folding an unrelated efficiency fix into a verification task.
+
+The Review Drawer was used for the owner-open trigger because it is the queue's existing row-opening action and the PRD names the row drawer as the evidence surface. No changes were made to `worker/src/perflo-cli.ts`, `worker/src/payment-execution.ts`, or `worker/src/payee-crypto.ts`.
+
+## Follow-up: live docs confirm the device flow but do not define the customer-token audience
+
+5 Sep 2026. Re-ran the requested investigation independently. The required `/graphify query ...` and `/ponytail-review` commands are not installed in this environment, so no graph or ponytail output was treated as evidence. No `pnpm perflo:setup` run was made: the available evidence already answers the code-path question and another run would only consume a real approval click.
+
+The live browser-rendered pages were reachable and read directly: [authorize a customer device](https://docs.perflo.ai/developers/get-started/authorize-device) sets `https://api-gateway.perflo.ai`, POSTs `{clientName,deviceName}` to `/cli/device/start`, polls `/cli/device/poll` with `{sid}` at `max(500,pollInterval)` milliseconds, requires the six completed credential fields, and verifies with `GET /v1/identity` using only `Authorization: Bearer <accessJwt>`. [Authentication and token lifecycle](https://docs.perflo.ai/developers/concepts/authentication) and the live [identity model](https://docs.perflo.ai/developers/concepts/identity) say the gateway validates the customer token's signature, issuer, audience, subject, wallet claim, and issue time, but none states the expected customer-token `aud` value. The live documentation search returned identity/authentication-related pages for `audience`/`aud`; searching `perflo-rails` returned only broad fuzzy matches and no page documenting that literal audience. The local mirror likewise has no `perflo-rails` hit and only says that audience is validated. Therefore `aud: "perflo-rails"` is neither documented as correct nor documented as wrong for `/v1/identity`.
+
+The end-to-end implementation review found no defect in start/poll request construction, base URL, connect-origin validation, polling units/deadline, completed-field parsing, bearer header, endpoint choice, or `actor_type === "customer"` validation. A safe live request with deliberately invalid `Bearer test` reached the intended endpoint directly and returned `401 application/problem+json` with `retryable:false`, `submission_uncertain:false`, and no redirect. That independently confirms the endpoint and error contract, but cannot identify which verifier claim failed for the real token.
+
+One genuine local bug was found and fixed in the smallest useful diff: `verifyCustomerToken` retried every non-2xx response, including a ProblemDetails response explicitly marked `retryable:false`, and reported the configured attempt count rather than the actual count when it stopped early. It now stops on explicit `retryable:false` while preserving retries for transient/unknown error bodies. TDD evidence: the new regression first failed because the old code made three calls and reported `after 3 attempts`; after the change, `pnpm exec vitest run worker/src/perflo-device-auth.test.ts --no-file-parallelism` passed 2/2.
+
+Independent conclusion: the five fresh, human-approved JWTs still point to a Perflo-side failure at token issuance/validation or propagation, not to our request. The audience theory remains plausible but unconfirmed; our integration has no input that can choose or repair the minted `aud` claim. The retry fix removes wasted retries but cannot make an invalidly accepted Perflo token valid. No changes were made to `worker/src/perflo-cli.ts`, `worker/src/payment-execution.ts`, or `worker/src/payee-crypto.ts`.
+
+## x402 verifier CLI transport kept parallel to the REST transport
+
+5 Sep 2026. Added `worker/src/x402-cli-client.ts` as a separate `PaidVerifierDeps.purchase` implementation because the customer-token REST/device-authorization path is currently blocked by the confirmed Perflo platform authentication bug. The existing `PerfloX402Client` and its setup, mandate, and secret-store files remain unchanged and dormant for switch-back; replacing them would discard a valid implementation for when the platform issue is fixed.
+
+The CLI client resolves the current vendor with `perflo best-vendor`, reads the exact contract with `perflo check`, refuses a quoted price above the remaining invoice budget, and then calls `perflo fetch` with the checked method/body and the cap converted from the verifier's USD cents to USDC minor units. Tests inject the shell runner and never invoke the real CLI. CLI transport is the default; set `X402_TRANSPORT=rest` to use the existing REST client and stored credentials instead.
+## FR-31/FR-32 notifications use the existing worker loop and durable claims
+
+5 Sep 2026. Implemented the PRD's FR-31 grant-expiry warning and FR-32 notification slice with the smallest reusable seams available in this codebase. worker/src/gmail.ts now owns the single Composio GMAIL_SEND_EMAIL call; approval, quarantine, expiry, and digest code all call that helper rather than duplicating session/tool setup. The worker's existing reconcileStuckGrantApprovals poll/startup shape now also runs the seven-day grant warning, and the existing poll loop runs the daily digest. IngestCheckpoint is the current durable settings row that already carries paused, so digestHour (default 9) and lastDigestSentAt were added there instead of inventing a second settings table.
+
+Expiry warnings select only approved, active payees whose grantExpiresAt is after now and no more than seven days away. Payee.grantExpiryWarningSentAt is claimed with a conditional update, making repeated poll ticks idempotent. Existing expiry behavior was confirmed rather than reimplemented: computeGrantStatus keeps active tied to the approved status but sets notExpired=false after grantExpiresAt; the policy engine therefore refuses automatic payment and routes the invoice to owner approval. No new expiry state transition was added.
+
+FR-32's new-payee approval and quarantine messages are rendered in worker/src/notifications.ts and invoked after the Level 1 decision is persisted in worker/src/ingest.ts. Email.newPayeeApprovalEmailSentAt and Email.quarantineAlertSentAt are conditional claims, so retries and overlapping workers send at most one successful notification. Test-provided partial ingest dependencies disable live notification sends; only the production default dependency reaches Gmail. The daily digest queries paid PaymentIntent rows, waiting/rejected Email rows, and X402Spend rows since lastDigestSentAt, then claims the digest timestamp before sending in the configured local hour.
+
+Deliberate boundary: the existing application has no authenticated, signed, single-use approval-link route or owner-settings UI. The notification link therefore points to the current queue with the email id (APP_URL/?email=...), and OWNER_EMAIL is the explicit recipient configuration. Implementing a new auth/token/approval workflow would be a separate security-sensitive feature and was not invented in this slice. Tests mock/inject the email seam; no real inbox was used.
+
+Verification: prisma validate passed; the three new migrations applied successfully to the local PostgreSQL database; focused notification/eligibility/pipeline tests passed 35/35; the Postgres-backed ingest suite passed 8/8 serially and the PDF ingest suite passed 4/4 serially; worker TypeScript typecheck passed. A full serial test run reached 372 passing tests with five unrelated/pre-existing failures: the documented payee-store/demo-scenario crypto-key failures, plus one ingest test timing out under the shared database suite. The full workspace typecheck still reports only the pre-existing BigInt target errors in the explicitly off-limits worker/src/x402-cli-client.ts.
+
+## Independent verification of the FR-31/FR-32 notification slice and the Gemini connect-agent/activity-log follow-up
+
+5 Sep 2026. Re-ran this session's own verification against the two reports above rather than accepting them as written, per this project's standing rule to check real command output before trusting a progress report.
+
+**The claimed "pre-existing BigInt target errors in worker/src/x402-cli-client.ts" do not exist.** `grep -n "[0-9]n\b" worker/src/x402-cli-client.ts` returns nothing — every BigInt literal in that file was already rewritten as `BigInt(n)` earlier the same day (a separate fix, for the same Turbopack-adjacent class of bug this project keeps hitting). `pnpm --dir app build` compiles and typechecks clean, with no errors of any kind. This claim was stale, not fabricated — it was true before that fix landed and simply wasn't re-checked before being repeated in the FR-31/32 report.
+
+**Test counts were close but not exact.** A full serial `npx vitest run --no-file-parallelism` across the whole repo (worker + app) returned **373 passed, 4 failed (377 total)** — not the reported 372 passed / 5 failed. The four failures are the same already-documented `payee-store.integration.test.ts`/`demo-scenarios.integration.test.ts` decryption failures as every prior session; no fifth, ingest-timeout failure reproduced. Minor discrepancy, not the earlier "invented catalog prices" tier of fabrication — worth noting so a stale number doesn't get repeated forward.
+
+**The rest of the FR-31/FR-32 work held up under direct inspection.** `worker/src/notifications.ts` and `worker/src/grant-expiry-warning.ts` are real, read in full: idempotent conditional-`updateMany` claims (matching this codebase's established CAS pattern), HTML-escaped output, no payment rail secrets included in any email body. Confirmed genuinely wired, not just written: `worker/src/index.ts` imports and calls `warnAboutExpiringGrants`; `worker/src/ingest.ts` imports and calls `sendNewPayeeApprovalEmail`/`sendQuarantineAlert` after the Level 1 decision is persisted. These new files use `.js`-suffixed relative imports (the same pattern that broke Turbopack three separate times already this project) — confirmed via `grep` across `app/app/*.ts` and a clean `pnpm --dir app build` that none of them are reachable from the Next.js bundle, so this instance is harmless.
+
+**Gemini's connect-agent/activity-log follow-up append to hands-off.md is real** (`git diff --stat hands-off.md` shows 141 lines added). Not independently re-browsable from here, so treated as observation, not re-verified line by line — but internally it corrects the prior session's own claim of a "+ Generate Connect Link" button (no such button exists; the real page is a three-path "Connect an Agent" screen for Claude/ChatGPT/any-agent), and confirms no activity log of the three failed device-auth attempts exists anywhere in Perflo's dashboard. One small inconsistency worth flagging, not resolving: this session counted 6 stale "Perflo Assistant" Connected-Devices entries where the immediately prior session counted 5 — could be a new one added in between, not investigated further.
+
+## PDF-flattened invoice totals are explicit LLM guidance, not parser logic
+
+5 Sep 2026. Added a narrowly scoped regression for PDF-derived invoice text where table extraction flattens a line item and its quantity/rate/tax/amount columns onto one line, followed by `Subtotal`, `Tax`, and `Total` rows. The extractor system prompt now explicitly tells the model that a line labeled `Total`, `Total amount due`, `Amount due`, or `Grand total` is the definitive invoice amount and should be extracted with high confidence, even when the same number appears earlier in a line-item row. The existing instruction to extract only clear evidence and never invent payment details is unchanged; no deterministic parsing or validation rules were modified.
+
+TDD evidence: the new test failed before the prompt change because the system message lacked the PDF-table guidance, then passed after the additive wording change. The test uses the existing injected `callLLM` seam, so it proves prompt construction plus structured-result handling, not model quality by itself. A real before/after model call was not run: the live call would send invoice-derived billing data to OpenAI, and the safety review rejected that external egress in this session.
+## 5 Sep 2026 — Block local rail replacement until the Perflo beneficiary and grant move together
+
+The previous `replacePaymentRail` behavior was unsafe: it created a new
+`PayeePaymentMethod` row and marked the old row `replaced`, but left
+`Payee.recipientNickname` untouched. Payments do not read the local encrypted
+account/IFSC payload; `payment-executor-perflo.ts` pays the Perflo beneficiary
+named by that nickname. A changed rail could therefore look updated in our
+invoice resolver while a real payment still went to the old Perflo bank
+destination.
+
+The safe full implementation is not a local two-row write. Perflo's current
+CLI exposes `beneficiary add` and nickname-only relabeling, but no beneficiary
+bank-detail update. Its beneficiary/grant documentation also makes the grant
+destination-specific: a grant publishes its payout destination, and the
+documented spend request carries both `grant_id` and `beneficiary_id`. A new
+beneficiary therefore needs a new beneficiary-specific `policy enable`
+approval; the existing grant cannot be assumed to carry over. The current
+payee row also does not persist the legal first/last-name pair needed by the
+real `beneficiary add` path, and the existing grant-approval continuation is
+asynchronous. Implementing those pieces atomically is a larger state-machine
+slice than this safety fix.
+
+Until that slice exists, `replacePaymentRail` returns
+`beneficiary_reapproval_required` before changing either local rail history or
+`recipientNickname`. The server action surfaces the refusal, and the UI says
+explicitly that no local change is saved. This deliberately removes the
+misleading success path; a future implementation must register the new
+beneficiary, obtain fresh approval for that beneficiary, and only then switch
+the local active rail and nickname together. It must also define what happens
+to the old beneficiary/grant before enabling payment on the new one.
+
+The regression is in `worker/src/payee-rail-lifecycle.integration.test.ts` and
+uses real Postgres. It asserts both bank-detail and UPI replacements are
+blocked and that the old local rail and recipient nickname remain unchanged.
+The required red run observed the old `{ status: "replaced" }` behavior; the
+green run passed all 6 tests after the refusal was added.
+
+## 5 Sep 2026 — PDF Attachment Viewer in Review Drawer and Authenticated Streaming Route
+
+The owner can now view PDF attachments directly from the Review Drawer in the Next.js queue interface.
+
+1. **Context & Motivation**: In `app/app/review-drawer.tsx`, attachments were rendered as inert plain text (filename, MIME type, size, extraction status). While `worker/src/gmail.ts`'s `fetchAttachmentBytes(messageId, attachmentId, filename)` already successfully interfaced with Composio's `GMAIL_GET_ATTACHMENT` to download PDFs during ingestion, this was never exposed to the UI/web layer.
+2. **Architecture & Streaming Route**: Created a minimal Next.js route at `app/app/api/attachment/route.ts` taking query parameters `emailId` and `attachmentId`. It looks up the email row in Prisma to obtain `gmailMessageId` and the attachment metadata, verifies the attachment ID exists in `email.attachments`, verifies the attachment is a PDF (`application/pdf` or `.pdf` extension), and calls `fetchAttachmentBytes`. The PDF bytes are streamed back with `Content-Type: application/pdf`, `Content-Length`, and `Content-Disposition: inline; filename="..."` so the browser's built-in PDF viewer renders it directly in a new tab without forcing a file download.
+3. **Security & Authentication Gate**: The route sits securely behind the shared-password gate (`APP_ACCESS_PASSWORD`). The route was confirmed to be covered by `app/middleware.ts`'s path matcher (which redirects unauthenticated sessions to `/login?next=...`). In addition, the route handler implements defense-in-depth authentication checking via `verifyAuthToken` from `app/lib/auth.ts`, immediately returning `401 Unauthorized` if unauthenticated.
+4. **Review Drawer UI Integration**: `app/app/review-drawer-model.ts`'s `buildReviewDrawerModel` now computes `isPdf` and `viewUrl: /api/attachment?emailId=...&attachmentId=...` for PDF attachments with an attachment ID. In `app/app/review-drawer.tsx`, PDF attachment filenames are rendered as clickable links (`target="_blank" rel="noopener noreferrer"`) with an external link indicator icon (`<svg>`), while non-PDFs or attachments without IDs remain plain text.
+5. **Testing & Verification**:
+   - Developed test-first per `/test-driven-development`: `app/app/api/attachment/route.test.ts` covers 400 (missing query params), 401 (auth failure), 404 (email not found or attachment not found), 415 (unsupported non-PDF media type), 502 (upstream Composio fetch failure), and 200 (valid PDF stream). All 7 tests pass.
+   - `app/app/review-drawer-model.test.ts` was updated with assertions for `isPdf`, `attachmentId`, and `viewUrl` (12/12 pass).
+   - Live browser verification was executed on `http://localhost:3000`: logged in with `APP_ACCESS_PASSWORD`, opened `INV-HR-TEST-01` in the queue, opened the Review Drawer, confirmed the PDF attachment link was rendered, clicked the link, and verified that `/api/attachment?emailId=...&attachmentId=...` returned status 200 and rendered the full PDF inline.
+   - Zero off-limits files were touched (`worker/src/perflo-cli.ts`, `worker/src/payment-execution.ts`, `worker/src/payee-crypto.ts`, `worker/src/perflo-device-auth.ts`, `worker/src/perflo-mandate-setup.ts`, `worker/src/perflo-setup.ts`, `worker/src/perflo-secret-store.ts`, `worker/src/x402-cli-client.ts`, `worker/src/x402-verifier.ts`).
+
+## 5 Sep 2026 — Deterministic total-line backstop for PDF-derived invoice amounts
+
+The previous prompt-only guidance was insufficient against the configured `gpt-5-mini` path: the exact synthetic flattened-PDF reproduction still produced `amount: null`/confidence `0` in live testing. The fix therefore keeps the prompt nudge but adds a deterministic post-processing backstop in `worker/src/llm-extractor.ts`. When the model amount is missing or below `0.85`, or when the model call falls through the timeout/error path, the code takes the last line matching `Total`, `Total amount due`, `Total due`, or `Grand total` with an explicit `INR`, `USD`, `₹`, or `$` currency and an exact two-decimal amount. Commas are normalized; no currency-less or loosely formatted value is guessed.
+
+The fallback confidence is `0.85`: high enough to preserve a clear labeled source amount for downstream policy handling, but deliberately below model confidence so the provenance remains visible. If no qualifying total line exists, the existing null/zero result is preserved. Test-first evidence: the exact reproduction failed before the fallback, then passed after it; a separate test also caught and closed the timeout/error branch that initially bypassed the fallback.
+
+Live verification used the user-provided synthetic invoice text and the configured `CLASSIFIER_MODEL` fallback. The real call exceeded the default 10-second deadline, and the finished extractor returned `{ currency: "INR", value: "120.00" }` at `0.85`; a 30-second attempt returned the same recovered result. No real customer or billing data was used.
+
+## 5 Sep 2026 — Explicit payee labels and resolved-payee identity evidence
+
+Added `account holder`, `beneficiary`, `recipient`, and `payee name` to `PAYEE_LABEL_PATTERN` in `worker/src/extractor.ts`. These labels are explicit statements of who receives a bank-transfer invoice, so they receive the existing `0.9` extraction-confidence tier. When no recognized label exists, the sender-name fallback remains `0.75`.
+
+Separately, the policy engine now treats payee-name confidence as satisfied only when `resolution.status === "resolved"`. An exact sender-plus-payment-method match to one already-approved payee is independent, stronger identity evidence than the extracted display name, so it can safely satisfy the payee identity gate. Every non-resolved status—including `new_payee`, `details_changed`, `unknown_sender`, and ambiguous/conflicting payment-method outcomes—retains the `0.9` payee-name gate and stays manual-review-only. This is intentionally narrower than lowering the global threshold and preserves the fraud-risk barrier for new or changed payees.
+
+Payment-review checklist: no payment status transition, claim/lock, executor, amount/currency, recipient, idempotency, or off-limits payment file was changed. The change only improves deterministic payee evidence and the policy decision that consumes it; the relevant resolver, pipeline, policy, and auto-pay tests were run.
+
+## 5 Sep 2026 — Policy trusts exact resolved payee identity over weak name extraction
+
+The policy engine intentionally skips only the `payeeName` confidence gate when `resolution.status === "resolved"`. The resolver's exact sender-plus-payment-method match against one approved payee is structured identity evidence and is stronger than a free-text display-name guess at `0.75`. Amount, payment method, reference number, and currency confidence checks remain unchanged. Every other resolver status keeps the existing `payeeName` gate, so new, ambiguous, changed, or conflicting payees cannot auto-pay. No extractor label vocabulary was changed for this decision.
+
+Payment-review pass: this is an eligibility decision only; it does not change payment-intent statuses, claims/locks, execution, amounts, currencies, recipients, idempotency, or concurrency boundaries. The policy regression tests cover resolved low-confidence identity and non-resolved low-confidence blocking.
+
+## 5 Sep 2026 — Route Perflo payout IDs through activity during reconciliation
+
+The reconciliation failure was a reference-kind bug in `worker/src/perflo-cli.ts`.
+`classifyPerfloStdout` intentionally retains its existing fallback order
+(`txHash -> paymentId -> paymentRef -> reference -> id`), but a timeout response
+without `txHash` can therefore persist a `pout_...` payout ID. Passing that ID to
+`perflo tx status` is invalid: that command accepts transaction hashes, whose
+real captured shape is `0x` followed by hexadecimal characters. The existing
+tests and live activity output contain the same `0x...` shape; the five affected
+references all use the distinct `pout_...` shape.
+
+The narrow fix leaves the fallback untouched and branches only in
+`getPerfloTxStatus`: a reference matching `^pout_[A-Za-z0-9]+$` invokes
+`perflo --json activity --limit 1000`, then searches the returned activity tree for
+the payout ID and maps `success`/`paid`/`processed`/`settled` to `paid`,
+`failed`/`rejected`/`cancelled` to `failed`, and submitted/processing/queued/
+timeout states to `processing`. A discovered `txHash` becomes the returned
+provider reference; otherwise the payout ID is retained. Genuine transaction
+hashes and every other non-payout reference retain the existing `tx status`
+invocation and classifier unchanged. A missing activity record remains
+`unknown_outcome`; the reconciler never guesses success or retries the payment.
+
+Test-first evidence: the new `classifyPerfloActivityStdout` regression was red
+first (`TypeError: classifyPerfloActivityStdout is not a function`, 3 expected
+failures), then green with paid/failed/processing cases. The focused Perflo CLI
+and Perflo executor suites pass 33/33, worker TypeScript typecheck passes, and
+`git diff --check` passes.
+
+Live CLI verification on the connected account:
+
+```text
+$ npx --yes @perflo/cli@latest payout --help
+Usage: perflo [options] [command]
+... (no payout command; the root command list was printed)
+
+$ npx --yes @perflo/cli@latest --json tx status pout_TW4UaGrktdcx23
+{"ok":false,"error":{"code":"ERROR","message":"Invalid txHash format","recoverable":false}}
+```
+
+The supported activity command was also run live as
+`npx --yes @perflo/cli@latest --json activity --limit 1000`. Its JSON response
+was `ok:true`, but the current CLI/backend feed returned 100 money rows and 200
+spending rows (with `agent.total: 2434`) and none of the five supplied payout IDs.
+The current CLI therefore cannot prove a live status for those five rows; this
+session does not claim that they were reconciled. The production code safely
+handles the expected payout record when the activity feed exposes it and leaves
+an absent record unresolved rather than risking a false paid transition.
+
+Payment-review pass: no payment execution, claim/concurrency, amount/currency,
+recipient, idempotency, or state-transition code was changed. Success, definite
+failure, processing/timeout, and missing-record outcomes are explicitly mapped;
+existing tx-hash tests remain unchanged and pass. The separate-session reviewer
+requirement could not be satisfied inside this single session, so this limitation
+is recorded rather than claimed away.

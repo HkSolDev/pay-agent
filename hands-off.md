@@ -1,7 +1,26 @@
 # Perflo AP Agent — Hands-off Handoff
 
-Last verified: 2026-09-05, later the same day (fixed two more real findings from the payment-execution security review: stale `claimed` rows had no recovery path, and `preparePayment`/`confirmPayment` could silently rewrite a claimed/paid row's payable fields; test-first, red then green for both; **not yet committed, reported back for verification per explicit instruction**)
-Branch: `feat/perflo-beneficiary-approval` — verified via `git status` and `git log --oneline -5` just before writing this line. HEAD is `52aa71d`. `git status` shows this session's own changes (`worker/src/payment-reconcile.ts`, `worker/src/payment-reconcile.test.ts`, `app/app/actions.ts`, new `app/app/actions.test.ts`) interleaved with a different, concurrent session's own Perflo-reconciliation work in the same `payment-reconcile.ts` file (`isReconcilableProviderReference`, `razorpayExecutorFromEnv`'s Perflo fallback) and separate uncommitted work in `worker/src/perflo-cli.ts`/`payment-executor-perflo.ts` and a new `app/app/login/`/`app/lib/`/`app/middleware.ts` (apparently an auth system in progress) from other sessions entirely — confirmed via `git diff --stat` that this task's own contribution to `worker/src/perflo-cli.ts`, `worker/src/payment-executor-perflo.ts`, and `worker/src/payment-execution.ts` (the explicitly off-limits files for this task) is exactly zero lines.
+Last verified: 2026-09-05, later the same day (investigated new post-commit test flakiness — found neither of the two named suspect files had the anti-pattern; the real cause and its fix, in `vitest.config.ts`, had already been applied by a different concurrent session mid-investigation; 5 consecutive `pnpm test` runs confirm determinism restored; **no code change made by this task, nothing to commit from it**)
+Branch: `feat/perflo-beneficiary-approval` — verified via `git status` and `git log --oneline -5` just before writing this line. HEAD is `4b7bdca`. `git status` shows `vitest.config.ts` as modified (a different, concurrent session's uncommitted fix — see below, not authored by this task) and an untracked `.codex/` directory from yet another session; this task itself produced zero file changes (investigation only, docs entries excepted).
+
+## Session summary — 2026-09-05, later the same day (investigated reported test flakiness — found no bug in the two named files; real cause already fixed by another session)
+
+**What this session did, in one sentence:** was asked to find and fix a `process.env`/row-cleanup anti-pattern in two newly-added test files (`app/app/actions.test.ts`, `worker/src/payment-reconcile.unit.test.ts`) suspected of reintroducing the `PAYEE_ENCRYPTION_KEY`-leak flakiness fixed earlier today, but after thorough investigation found neither file contained it — the real cause was a different, previously-considered-safe file (`worker/src/payee-crypto.test.ts`), and its fix had already landed in `vitest.config.ts` by a concurrent session while this investigation was still in progress.
+
+**Read `docs/DECISIONS.md`'s entry titled "New post-commit flakiness investigated: neither newly-added test file was the cause..."** for the full technical reasoning, including the exact interleaving mechanism that explains why `payee-crypto.test.ts` — used as *the reference for the correct pattern* in earlier fixes today — was itself part of the problem. This section is the narrative/status version.
+
+**Why report "no bug found" instead of forcing a fix into the two named files, for the next session's benefit:**
+- **Verified by direct code read first**: grepped both named files for `PAYEE_ENCRYPTION_KEY`/`PAYEE_HASH_KEY` — zero matches in either. Read `payment-reconcile.unit.test.ts` in full: it imports no `prisma`, creates zero database rows, and its only env mutation (`RAZORPAY_KEY_ID`/`SECRET`/`ACCOUNT_NUMBER`) already uses the correct save-and-restore pattern. Read `actions.test.ts` in full: the one `Payee` row it creates has no identities, no payment methods, and defaults to `grantApproved: false` — `loadApprovedPayees()`'s table-wide scan, the exact mechanism every prior instance of this bug class went through, would never touch it.
+- **Verified empirically, not just by reading**: ran `pnpm test` 8 times consecutively (byte-identical `4 failed | 351 passed (355)`, the same pre-existing unrelated issue each time), then ran the single most adversarial condition available — `npx vitest run --no-file-parallelism`, forcing all ~55 files into one sequential process so a residual leak would have nowhere to hide. Still exactly the same 4 known failures. This is what justified concluding "no bug here" rather than inventing a defensive change with no red test behind it.
+- **Found `vitest.config.ts` had changed on disk mid-investigation** (a `git diff HEAD -- vitest.config.ts` check, per the standing instruction to treat an externally-changed file as deliberate rather than reverting it) — another session had added a `SHARED_PAYEE_CRYPTO_ENV_FILES` group (`payee-crypto.test.ts` plus the three already-fixed integration files) to the existing serialization list, for exactly the reason this task's own investigation was independently converging on: each file's own save-in-afterAll pattern only stops leakage *forward* to the next file, not interleaving *while two files' env mutations are both mid-flight concurrently* in the same worker — which is what actually produced the intermittent auth-tag failures, since `payee-crypto.test.ts` uses a different key value and even deletes the var in one of its own cases.
+- **Did not re-apply or duplicate that fix** — it was already correct and already verified working by the time this investigation confirmed it, and this session made zero edits to any file as a result.
+
+**Verification actually performed, not just claimed:**
+- `pnpm test` × 8 before finding the `vitest.config.ts` change: byte-identical `4 failed | 351 passed (355)` every time.
+- `npx vitest run --no-file-parallelism`: same 4 known failures, nothing new, under maximum adversarial conditions.
+- `pnpm test` × 5 (the task's required minimum) after confirming the `vitest.config.ts` fix was in place: byte-identical `4 failed | 351 passed (355)` all 5 times, the two known-failing files now tagged `|shared-pending-grant-lock|` in the output (confirming they run under the newly-extended serialized project).
+- `npx vitest run app/app/actions.test.ts worker/src/payment-reconcile.unit.test.ts --no-file-parallelism`: 9/9 pass in isolation.
+- Nothing committed — this task made no code changes, so there is nothing of this task's own to commit.
 
 ## Session summary — 2026-09-05, later the same day (fixed: stale claimed-row recovery gap, and unguarded payable-field rewrites in preparePayment/confirmPayment)
 
@@ -996,4 +1015,253 @@ Red/green evidence: the preservation test failed with `Received: "idem-key-1"` i
 - Error validation state: `login_error_state.png`
 - Unlocked review queue: `unlocked_review_queue_1788591880734.png`
 - Browser session recording: `auth_gate_demo_1788591736150.webp`
+- 2026-09-05 x402 verifier work: added the human-triggered `pnpm perflo:setup` device-auth/mandate/pairing script, encrypted credential storage, a mandate-scoped REST purchase client, email `email_verify` and link `browser` checks, additive `x402_spend`/budget schema migration, and a policy hook that turns empty-balance or failed paid checks into `needs_approval`. The live device-auth flow was not executed. Phone callback, reputation/company checks, UI display changes, and automatic invocation from normal ingest remain out of scope; the paid callback must be supplied at the pre-payment or owner-open seam.
 
+## Session summary — 2026-09-05 (Payee Form: Field-Level Error Attribution & Highlights)
+
+**What this session did, in one sentence:** Enhanced `app/app/payee-form.tsx` to parse server-side Perflo banking rejection errors (such as `invalid_destination_details`) and display them directly under the offending Bank Account Number and IFSC input fields with red error borders, clearing immediately upon user input.
+
+**Implementation Details:**
+- **Scoped exclusively to `app/app/payee-form.tsx`**: Zero changes to server actions, Prisma queries, or `worker/src/*`.
+- **Field Error Mapping**: Catches Perflo CLI errors on submission and attributes `invalid_destination_details` to `errors.accountNumber` ("Check account number — Perflo reported destination details invalid.") and `errors.ifsc` ("Check IFSC code — branch code rejected by Perflo.").
+- **Visual Feedback**: Adds red border highlight (`#c0392b`) to invalid inputs matching Perflo's "Check the highlighted fields" prompt.
+- **Dynamic Clearing**: Form field updater `set()` automatically strips active field errors as soon as the user starts typing in that field.
+- **Verification**: Verified live in the browser at `http://localhost:3000/payees`; screenshot captured at `payee_form_errors_1788602987084.png`.
+
+## Session summary — 2026-09-05 (x402 catalog-status correction and trigger wiring)
+
+Corrected the earlier x402 documentation claim that `email_verify`/`browser` and the `$0.03`/`$0.10` prices were live-confirmed. No device-auth approval has happened and no Perflo credentials file exists on this machine, so those capability/service/price values are now explicitly documented as placeholder/best-guess values from the illustrative marketplace documentation. The note requires verification against real `GET /v1/service-capabilities` and `GET /v1/services` responses on the first human-approved setup run and records the existing `services.find(...) ?? services[0]` fallback as the interim protection.
+
+Added `worker/src/paid-verification.ts` and wired the existing paid verifier into the actual allowed seams: `preparePayment`, `confirmPayment`, the auto-pay pre-payment gate, and the `Review row` action that opens the Review Drawer. Stored paid evidence is reused for the same invoice; missing setup becomes `unverified` without blocking the queue, and auto-pay leaves an unverified invoice for owner approval. Normal ingest remains free of paid calls. The focused runner and auto-pay regression tests pass; the app action integration suite could not run because local Postgres was unavailable. No changes were made to `worker/src/perflo-cli.ts`, `worker/src/payment-execution.ts`, or `worker/src/payee-crypto.ts`; nothing was committed or put in a PR.
+
+## Session summary — 2026-09-05 (Perflo dashboard connected devices & agent status live investigation)
+
+**What this session did, in one sentence:** Performed a read-only live browser investigation on `https://app.perflo.ai` using Abhinav's authenticated session to check Connected Devices and locate the reported "Agent Status: Not finished" screen, with strictly zero source code edits and zero permission/spending limit changes.
+
+**Findings reported verbatim from screen:**
+1. **Settings → Security → Connected devices (`https://app.perflo.ai/settings/security`)**:
+   - Neither `"Perflo AP Agent"` nor `"Perflo AP Agent backend"` appears in the list.
+   - The list currently contains exactly 5 identical entries:
+     - `Perflo Assistant`
+     - `zmhjn0y61y · last used 27/08/2026`
+   - Screenshot captured: `connected_devices_settings_1788606245970.png`.
+2. **Search for "Agent Status: Not finished — Almost done. One more step on your device"**:
+   - Navigated across `Agent → Permissions` (`/permissions`), `Connect Agent` (`/connect-agent`), and `Agent` chat (`/ai-agent`).
+   - On `/permissions`: Header states `"Agent Permissions"`, subtitle `"Manage permissions for connected agents."`. Tabs for `"Connected Agents"` and `"Pending Requests"` both show empty states (`"No agents connected"` / `"No pending requests"`).
+   - On `/connect-agent`: Shows `"Connect an Agent"` with description `"Generate a connection link to connect your AI agent with Perflo."` and a `"+ Generate Connect Link"` button.
+   - The `"Agent Status: Not finished — Almost done. One more step on your device"` banner was not present on any of these pages. It was likely a transient prompt rendered immediately post-redirect on a specific `https://app.perflo.ai/connect?sid=...` or `/approve?sid=...` session rather than a persistent view in the settings dashboard.
+   - Screenshots captured: `permissions_tab_1788606385412.png` and `connect_agent_tab_1788606411062.png`.
+3. **Action & Device Status Re-check**:
+   - Because no pending pairing banner, action button, QR code, or device prompt was active on screen, no connection action could be clicked.
+   - Connected devices list remained unchanged upon re-checking.
+
+## Session summary — 2026-09-05 (x402 CLI transport)
+
+Added the parallel CLI-backed x402 purchase client and made it the default paid-verifier transport; `X402_TRANSPORT=rest` preserves the dormant REST path for later switch-back. The CLI shell-out is mocked in focused tests, and the existing beneficiary/policy CLI code and REST setup files were left untouched. No real paid service call was made and no PR was created.
+## Session summary — 2026-09-05 (FR-31 grant expiry and FR-32 notifications)
+
+Implemented the FR-31/FR-32 notification slice on feat/perflo-beneficiary-approval: added the Composio Gmail sendEmail seam, seven-day grant-expiry warnings with a durable Payee claim, daily paid/waiting/rejected/x402 digest with configurable digestHour and lastDigestSentAt, and one-time new-payee approval/quarantine alerts wired after persisted Level 1 decisions. Added Prisma migrations for all durable fields and injected notification hooks so automated tests cannot send real mail. The new-payee link intentionally points to the existing queue because this codebase has no signed/authenticated approval route yet; that separate security-sensitive flow remains unimplemented.
+
+Verification: prisma validate passed; migrations 20260905171000_grant_expiry_warning, 20260905171100_daily_digest_settings, and 20260905171200_notification_dedupe applied to local Postgres; focused suite passed 35/35; serial worker/src/ingest.test.ts passed 8/8; serial worker/src/ingest-pdf.test.ts passed 4/4; worker typecheck passed. Full suite reached 372 passing tests and 5 unrelated failures (existing crypto-key fixtures plus one shared-DB timeout). Full workspace typecheck remains blocked by existing BigInt target errors in off-limits worker/src/x402-cli-client.ts. No off-limits files were edited, and nothing was committed.
+
+## Session summary — 2026-09-05 (Perflo dashboard /connect-agent & Activity log live investigation)
+
+**What this session did, in one sentence:** Executed a read-only live browser investigation on `app.perflo.ai` across `/connect-agent`, `/transactions` (Activity log), and `/settings` to test the connect flow and check for records of earlier device-auth attempts, strictly making zero code edits and zero permission/spending limit changes.
+
+**Findings reported verbatim from screen:**
+
+1. **Inspection of `https://app.perflo.ai/connect-agent` (Connect Agent)**:
+   - **`+ Generate Connect Link` button check**: No button with the text `"+ Generate Connect Link"` (or `"Generate Connect Link"`) exists anywhere on the page, in sub-drawers, or inside modals. The earlier mention in the previous summary was either mistaken or referred to a different page iteration.
+   - **Actual page contents**:
+     - Header: `"Connect"`
+     - Badge: `"CONNECT AN AGENT"`
+     - Heading: `"Hand your agent a pay-per-use desk, not the keys."`
+     - Subtitle: `"Connect the AI you already use. It manages money inside limits you set, and every dollar can only ever come back to you."`
+     - Section: `"BRING THE AGENT YOU ALREADY TRUST"` with three selectable connector cards:
+       1. **Claude** (`Recommended`):
+          - Card subtitle: `"Custom connector opens prefilled. The smoothest setup."`
+          - Sub-view heading: `"Connect Claude to your money"`
+          - MCP Server URL field: `"https://mcp.perflo.ai"` with `"Copy"` button.
+          - Button text: `"Open in Claude"`
+          - Direct link text: `"or open the connector link directly"`
+          - Exact `href` target of direct link:
+            `https://claude.ai/new?modal=add-custom-connector&connectorName=Perflo&connectorUrl=https%3A%2F%2Fmcp.perflo.ai#settings/customize-connectors`
+       2. **ChatGPT**:
+          - Card subtitle: `"Add Perflo as a custom connector in settings. Two minutes."`
+          - Sub-view heading: `"Connect ChatGPT to your money"`
+          - Sub-view description: `"There’s no one-tap install for ChatGPT yet, and no published plugin. You’ll paste Perflo’s URL into Settings → Connectors once — about two minutes, and it’s the same secure connection Claude uses."`
+          - MCP Server URL field: `"https://mcp.perflo.ai"` with `"Copy"` button.
+          - Button text: `"Open ChatGPT connectors"`
+          - Helper text: `"Best-guess link — confirm the exact Connectors path in ChatGPT. Custom connectors need developer mode enabled."`
+          - 4 Instructions: `"1 Open Settings → Connectors in ChatGPT and turn on Developer mode."`, `"2 Choose “Create” / “Add custom connector.”"`, `"3 Paste the Perflo MCP URL and name it Perflo."`, `"4 Connect and sign in. Approve access once, and your limits still apply."`
+       3. **Any command-running agent** (`Any agent` tab):
+          - Card subtitle: `"Claude Code, Cursor, Codex, Hermes. Paste one link to set up."`
+          - Sub-view heading: `"Set up Perflo in any command-running agent"`
+          - Sub-view subtitle: `"Hermes, Claude Code, Cursor, Codex — paste one link and your agent sets itself up."`
+          - Setup command box text: `"Set up https://app.perflo.ai/skill.md"` (with copy icon)
+          - Button text: `"Copy the skill for your agent"`
+     - Section below fold:
+       - Control callout: `"You stay in control"`, `"Every connection is capped and reversible."`, `"Money can only ever return to you, never to a stranger."`, `"Your pay-per-use limit is $50.00. You set it, and you can change it anytime."`, `"Stop any agent instantly. One tap revokes access."`, button: `"Manage pay-per-use limits ->"`.
+       - Section: `"CONNECTED NOW"`, listing 6 stale entries for `"Perflo Assistant"`, `"last used 27/08/2026"`.
+   - **Comparison to CLI `approveUrl`**:
+     - The CLI `policy enable`/device-auth flow produces an ephemeral session authorization link: `https://app.perflo.ai/approve?sid=<SESSION_ID>` (or `https://app.perflo.ai/connect?sid=<SESSION_ID>`).
+     - The dashboard's `/connect-agent` page produces **no session-bound `approveUrl`**. Instead, it distributes:
+       1. Static MCP server endpoint: `https://mcp.perflo.ai`
+       2. Web custom-connector deep link: `https://claude.ai/new?modal=add-custom-connector&connectorName=Perflo&connectorUrl=https%3A%2F%2Fmcp.perflo.ai#settings/customize-connectors`
+       3. Prompt pointer: `Set up https://app.perflo.ai/skill.md` (which itself instructs agents to run `npx @perflo/cli onboard` to generate a device connect link).
+   - Screenshots captured: `connect_agent_full_1788608633052.png`, `connect_agent_bottom_1788608644889.png`, `connect_agent_claude_tab_1788609074681.png`, `connect_agent_chatgpt_tab_1788609104167.png`, `connect_agent_any_agent_tab_1788609141222.png`.
+
+2. **Investigation of Perflo's Activity Log (`https://app.perflo.ai/transactions`)**:
+   - Navigation entry: Reached via top-right `"Activity"` button (clock icon) which maps to `/transactions`.
+   - Tabs present: `"All"`, `"Transfers"`, `"Earn"`, `"Predictions"`, `"Trading"`, `"Agent"`, `"Cards"`.
+   - **'All' tab (default 30-day filter)**:
+     - Exact screen text: `"Nothing in this time range. You may have older activity. Show all time to see it."`
+     - Button text: `"Show all time"`
+   - **'All' tab (All-time filter)**:
+     - Count: `"0 results"`
+     - Exact screen text: `"No transactions yet. When you make a move, it'll appear here."`
+     - Summary: `"September so far — Money in $0.00, Money out $0.00, Agent spend $0.00"`.
+   - **'Transfers' tab**:
+     - Count: `"0 results"`
+     - Exact screen text: `"No transfers yet. Money you send and receive will appear here."`
+     - Summary: `"September so far — Money in $0.00, Money out $0.00"`.
+   - **'Agent' tab**:
+     - Exact screen text: `"Pay-per-use is off"`
+     - Subtitle: `"Turn on pay-per-use to let your agent pay for services within a limit you set."`
+     - Button text: `"Set up pay-per-use"`
+   - **Settings & Security audit check (`https://app.perflo.ai/settings` and `/settings/security`)**:
+     - `/settings` displays user preferences only: Display Currency (`US Dollar USD`), Show values in local currency switch, Gold price unit (`oz / g`), App Version (`1.0.2`), Connected accounts (`X`, `GitHub @HkSolDev Connected`).
+     - `/settings/security` displays 2FA and `"Connected devices"`, listing only the 6 stale `27/08/2026` entries.
+   - **Finding regarding the 3 failed device-auth attempts from earlier today**:
+     - **No log or record exists**: There is no audit log, activity log, event stream, or error record anywhere in Perflo's web dashboard for failed, expired, or aborted device authentication handshakes. Unapproved device auth attempts simply leave zero trace on `app.perflo.ai`.
+   - Screenshots captured: `activity_log_all_tab_1788608924177.png`, `activity_log_transfers_tab_1788608961606.png`, `activity_log_agent_tab_1788608504521.png`, `settings_page_1788608976228.png`, `settings_security_page_1788609011195.png`.
+
+## Session summary — 2026-09-05 (PDF invoice amount extraction guidance)
+
+Added one focused regression in `worker/src/llm-extractor.test.ts` using the reproduced flattened PDF-table body (`Cloud hosting - September 2026 ... Total INR 120.00`). Added only additive guidance to `EXTRACTOR_SYSTEM_PROMPT` in `worker/src/llm-extractor.ts`: explicit `Total`/`Amount due`/`Grand total` labels are definitive in flattened PDF invoice text and should receive high confidence. Existing anti-invention guidance and all parser/validation logic remain unchanged. `/graphify query` was run for orientation; no ponytail executable or skill was installed, so the smallest-diff/no-rewrite constraint was applied manually.
+
+Verification: the new test was red before the prompt edit (1 expected failure, 9 existing tests passing) and focused `pnpm exec vitest run worker/src/llm-extractor.test.ts --no-file-parallelism` was green after it (10/10). A real model before/after comparison was not completed because the safety review rejected sending invoice-derived billing data to OpenAI from this session.
+## Session summary — 2026-09-05 (block unsafe Perflo rail replacement)
+
+Fixed a payment-safety gap in `replacePaymentRail`. Before this session,
+replacing a local rail changed only `PayeePaymentMethod`; real Perflo payments
+continued to use the old `Payee.recipientNickname`, so the owner could believe
+bank details were changed while the payout destination was not.
+
+The safe minimum slice now refuses every confirmed rail replacement with
+`beneficiary_reapproval_required` before any local write. The server action
+turns that into an explicit error, and the replace form warns that no local
+change is saved. The old successful local-only code path and its unused crypto
+write imports were removed. No off-limits file was changed.
+
+Reasoning recorded in `docs/DECISIONS.md`: Perflo has no bank-detail edit
+command, and its docs show grants are tied to a specific beneficiary/destination
+(`grant_id` plus `beneficiary_id` in the spend flow). A safe future replacement
+must create a new Perflo beneficiary, obtain a new beneficiary-specific policy
+approval, and activate the new local rail/nickname only after that handoff;
+the existing payee model does not yet persist the legal first/last name needed
+for beneficiary creation, so that larger state machine was not attempted here.
+
+Verification:
+
+- `/graphify query` was run against the existing graph to trace
+  `replacePaymentRail` → payee approval/beneficiary registration →
+  `recipientNickname` → Perflo payment execution.
+- No ponytail executable or skill is installed in this workspace; the
+  smallest-diff/no-rewrite constraint was applied manually.
+- TDD red run against real Postgres failed on the new assertion because the
+  old code returned `{ status: "replaced" }`; after the fix,
+  `pnpm exec vitest run worker/src/payee-rail-lifecycle.integration.test.ts
+  --no-file-parallelism` passed 6/6.
+- A live, read-only Perflo CLI call (`beneficiary list`, CLI v6.1.0) returned
+  `ok: true` and showed active registered beneficiaries, including multiple
+  distinct `Test Vendor` beneficiary IDs/nicknames with different destinations.
+  This confirms the real list boundary and that beneficiary registration is
+  not a local database concept.
+- A new live beneficiary write was not performed: the external safety review
+  rejected transmitting an invented test bank payload and creating a
+  persistent account mutation without exact user approval. Therefore this
+  session does not claim a fresh re-registration smoke test; the code ships
+  the explicitly allowed blocked path instead.
+
+Payment-review limitation: the full checklist was traced against the diff,
+but the independent separate-session reviewer requirement cannot be satisfied
+inside this single session. No payment status machine or payment execution
+code was changed; the relevant safety property is tested as a refusal before
+the local rail/nickname boundary.
+
+## Session summary — 2026-09-05 (PDF Attachment Viewer in Review Drawer & Authenticated Streaming Route)
+
+**Task completed**: Implemented the ability for the owner to view PDF attachments from the Review Drawer on branch `feat/perflo-beneficiary-approval`.
+
+**Changes made**:
+1. **Authenticated PDF Streaming API Route (`app/app/api/attachment/route.ts`)**:
+   - Accepts `emailId` and `attachmentId` query parameters.
+   - Defense-in-depth security: verifies authentication token against `APP_ACCESS_PASSWORD` using `verifyAuthToken` (returning 401 if missing/invalid), and confirmed route is covered by `app/middleware.ts` which redirects unauthenticated requests to `/login?next=...`.
+   - Looks up the email row in Prisma, verifies the attachment ID exists in `email.attachments`, and checks that the attachment is a PDF (`application/pdf` or `.pdf` extension, returning 415 if not).
+   - Calls `worker/src/gmail.ts`'s `fetchAttachmentBytes(gmailMessageId, attachmentId, filename)` to fetch raw PDF bytes via Composio's `GMAIL_GET_ATTACHMENT`.
+   - Streams PDF bytes back with `Content-Type: application/pdf`, `Content-Length`, and `Content-Disposition: inline; filename="..."` so browsers render the PDF directly in a new tab.
+   - Built with dependency injection (`createAttachmentHandler`) for fast, isolated testing.
+2. **Review Drawer Model & UI Updates (`app/app/review-drawer-model.ts`, `app/app/review-drawer.tsx`)**:
+   - `buildReviewDrawerModel` calculates `isPdf` and builds `viewUrl: /api/attachment?emailId=...&attachmentId=...` for PDF attachments with an attachment ID.
+   - `review-drawer.tsx` renders PDF attachments as clickable `<a>` links (`target="_blank" rel="noopener noreferrer"`) with an external-link icon, while keeping non-PDF attachments as plain text.
+3. **Tests & Quality**:
+   - `app/app/api/attachment/route.test.ts` (new): 7 unit tests covering 400 (missing params), 401 (auth failure), 404 (email not found or attachment not found), 415 (unsupported media type), 502 (upstream Composio fetch failure), and 200 (valid PDF streaming).
+   - `app/app/review-drawer-model.test.ts`: updated with tests for `isPdf`, `attachmentId`, and `viewUrl` population (12/12 pass).
+   - Full app typecheck: `pnpm --dir app typecheck` and `pnpm typecheck` pass with zero errors.
+   - App test suite: 44/44 tests pass.
+4. **Live Browser Verification**:
+   - Ran an automated live browser test on `http://localhost:3000`.
+   - Authenticated at `/login` with `APP_ACCESS_PASSWORD` (`perflo-access-2026`).
+   - Navigated to the AP queue, selected an invoice with an attached PDF (`INV-HR-TEST-01`, `invoicehemantrealTEST01.pdf`).
+   - Opened the Review Drawer, verified that the PDF filename rendered as a clickable link with external-link icon.
+   - Clicked the link and confirmed that `/api/attachment?emailId=...&attachmentId=...` responded with HTTP 200 and rendered the full PDF inline in the browser displaying INR 120.00, invoice breakdown, and payee banking details.
+5. **Constraints & Off-Limits**:
+   - Zero lines touched in off-limits files: `worker/src/perflo-cli.ts`, `worker/src/payment-execution.ts`, `worker/src/payee-crypto.ts`, `worker/src/perflo-device-auth.ts`, `worker/src/perflo-mandate-setup.ts`, `worker/src/perflo-setup.ts`, `worker/src/perflo-secret-store.ts`, `worker/src/x402-cli-client.ts`, `worker/src/x402-verifier.ts`.
+
+## Session summary — 2026-09-05 (deterministic PDF invoice total fallback)
+
+The prompt-only fix was not sufficient for the configured model, so `worker/src/llm-extractor.ts` now applies a narrow deterministic fallback after LLM extraction and on the LLM timeout/error path. It uses the last exact summary line with a supported explicit currency and two-decimal amount, normalizes commas/currency symbols, and assigns confidence `0.85` to distinguish source-regex recovery from model certainty. The existing prompt guidance remains in place; no parser/validation constants or off-limits files were changed.
+
+Tests added to `worker/src/llm-extractor.test.ts`: the exact flattened reproduction with mocked `amount: null`, the LLM-failure/timeout path, and a negative no-`Total` case. TDD red/green evidence was recorded: the reproduction failed before implementation, then the focused suite passed 13/13 after implementation. Real synthetic live verification returned amount `{ currency: "INR", value: "120.00" }` with confidence `0.85`; the configured model call exceeded both the default 10-second deadline and a 30-second verification deadline, so the observed live success is specifically the finished deterministic backstop path.
+
+## Session summary — 2026-09-05 (payee-name extraction and resolved-payee gating)
+
+Ran graphify orientation and test-driven red/green verification. Ponytail tooling was unavailable in this workspace, so the smallest-diff/no-rewrite constraint was applied manually. Added exact `Account holder\nHemant Kumar` coverage at `0.9`, retained the unresolved no-label sender fallback at `0.75`, added resolved sender-plus-rail coverage that permits auto-pay, and confirmed non-resolved statuses remain gated. The policy exception is centralized in `policy-engine.ts`, which keeps normal Level 1 and policy reevaluation behavior consistent. No payment execution/state code was changed.
+
+Payment-review checklist was applied against the actual diff and PRD requirements. Focused extractor, pipeline, policy, resolver, and auto-pay tests, worker typecheck, and whitespace validation are recorded below after completion.
+
+## Session summary — 2026-09-05 (policy payee-confidence double-check)
+
+Ran graphify orientation and the requested TDD/payment-review instructions. Ponytail tooling was unavailable, so no rewrite or unrelated cleanup was performed. Confirmed the existing policy fix skips only `payeeName` confidence for an exact `resolved` sender-plus-rail match; amount, payment method, reference number, currency, and all non-resolved payee statuses remain gated. `worker/src/extractor.ts` was intentionally left unchanged for this task.
+
+Verification: policy and surrounding auto-pay tests passed; worker typecheck and `git diff --check` passed. The database-backed `reevaluate-policy` suite remains environment-blocked at Prisma setup before test execution.
+
+## Session summary — 2026-09-05 (Perflo payout-ID reconciliation lookup)
+
+Fixed the real reconciliation reference-kind bug on `feat/perflo-beneficiary-approval`.
+The pay classifier's required fallback order remains unchanged. In
+`worker/src/perflo-cli.ts`, references matching the captured payout-ID shape
+`pout_...` now use `perflo --json activity --limit 1000`; activity records are
+matched by the payout ID and mapped to the existing
+`PerfloTxStatusResult` (`paid`, `failed`, `processing`, or `unknown`). Genuine
+`0x...` transaction hashes continue through the existing `perflo --json tx
+status <hash>` path unchanged. No off-limits payment files were touched.
+
+Ran `/graphify query` to trace classifier → executor → reconciler. No ponytail
+executable or skill is installed in this workspace, so the smallest-diff/no-
+rewrite constraint was applied manually. TDD red/green evidence and the live
+CLI output/limitation are appended to `docs/DECISIONS.md`.
+
+Verification: `worker/src/perflo-cli.test.ts` red first with the expected missing
+activity classifier, then focused Perflo CLI + executor tests passed 33/33;
+worker TypeScript typecheck and `git diff --check` passed. Live `payout --help`
+confirmed there is no payout command. Live `tx status pout_TW4UaGrktdcx23`
+returned `{"ok":false,"error":{"code":"ERROR","message":"Invalid txHash
+format","recoverable":false}}`. Live `activity --limit 1000` returned
+`ok:true` but no supplied `pout_...` ID, so the five real rows remain unverified
+by the current CLI feed and are not falsely reported as reconciled.
+
+Payment-review limitation: the independent separate-session reviewer pass could
+not be performed inside this single session; the limitation is explicit in the
+decision log.

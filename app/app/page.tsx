@@ -24,7 +24,10 @@ async function loadRazorpayBalance() {
 
 export default async function QueuePage() {
   const [emails, intents, approvedPayeeCount, activeRailCount, razorpayBalance, syncPaused] = await Promise.all([
-    prisma.email.findMany({ orderBy: { date: "desc" }, take: 50 }),
+    // ponytail: flat cap, not real pagination — raised from 50 after it
+    // silently hid real needs_approval/paid rows once test volume passed 50
+    // emails in a session. Add pagination if the inbox regularly exceeds this.
+    prisma.email.findMany({ orderBy: { date: "desc" }, take: 500 }),
     prisma.paymentIntent.findMany(),
     prisma.payee.count({ where: { status: "approved" } }),
     prisma.payeePaymentMethod.count({ where: { status: "active" } }),

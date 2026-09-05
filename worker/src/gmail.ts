@@ -33,6 +33,27 @@ export interface RawGmailMessage {
   payload?: GmailPart; // Gmail's nested MIME representation
 }
 
+export interface EmailMessage {
+  to: string;
+  subject: string;
+  text: string;
+  html?: string;
+}
+
+/** Sends an owner notification through the same authenticated Gmail session as intake. */
+export async function sendEmail(message: EmailMessage): Promise<void> {
+  const session = await getSession();
+  const result = await session.execute("GMAIL_SEND_EMAIL", {
+    recipient_email: message.to,
+    subject: message.subject,
+    body: message.html ?? message.text,
+    is_html: message.html !== undefined,
+  }) as { successful?: boolean; error?: string };
+  if (result.successful === false || result.error) {
+    throw new Error(result.error ?? "Gmail rejected the message.");
+  }
+}
+
 /**
  * True once the owner has clicked through Gmail's OAuth consent screen for
  * this session. Level 0 can run before this is true — every poll just finds

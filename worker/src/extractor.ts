@@ -312,7 +312,7 @@ function extractDates(text: string): { issueDate: string | null; issueDateConfid
 // time) and must never be read as the payee; only an explicit "Pay to" /
 // "Payee" / "Remit to" label, or the sender's own name, identifies who the
 // money actually goes to.
-const PAYEE_LABEL_PATTERN = /\b(?:pay\s*to|payee|remit\s*to)\s*:?\s*([A-Za-z][A-Za-z .]{1,60})/i;
+const PAYEE_LABEL_PATTERN = /\b(?:pay\s*to|payee(?:\s+name)?|remit\s*to|account\s*holder|beneficiary|recipient)\s*:?\s*([A-Za-z][A-Za-z .]{1,60})/i;
 
 function extractPayee(text: string, fromName: string | null | undefined): { value: string | null; confidence: number } {
   const labeled = text.match(PAYEE_LABEL_PATTERN);

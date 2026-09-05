@@ -81,6 +81,9 @@ export async function replaceRailAction(formData: FormData): Promise<void> {
   if (result.status === "confirmation_required") throw new Error("Confirm the rail replacement before submitting.");
   if (result.status === "invalid_method") throw new Error("The new payment rail is invalid.");
   if (result.status === "not_found") throw new Error("The original payment rail was not found.");
+  if (result.status === "beneficiary_reapproval_required") {
+    throw new Error("Rail replacement is blocked: changing bank details must register a new Perflo beneficiary and obtain a new approval before this payee can be paid.");
+  }
   revalidatePath("/payees");
 }
 

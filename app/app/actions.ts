@@ -9,6 +9,8 @@ import { isSyncPaused, setSyncPaused } from "../../worker/src/sync-state";
 import { reviewRetryBlockReason } from "../../worker/src/review-retry";
 import { reevaluatePolicy } from "../../worker/src/reevaluate-policy";
 import { resumeAutoPayForEligibleInvoices } from "../../worker/src/resume-auto-pay";
+import { runPaidVerifierForEmail } from "../../worker/src/paid-verification";
+import type { VerificationResult } from "../../worker/src/verifier";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -43,6 +45,11 @@ export async function preparePayment(formData: FormData) {
   const currency = sourceAmount?.currency === "USD" ? "USD" : sourceAmount?.currency === "INR" ? "INR" : "";
   const validation = validatePaymentInput(payee.recipientNickname, amount);
   if (!validation.ok || !currency) throw new Error("The invoice does not contain a valid payable amount and currency.");
+
+  // Paid verification is deliberately triggered here, at the real prepare
+  // boundary, rather than from normal ingest. The owner may still explicitly
+  // confirm a payment after an unverified paid check; auto-pay fails closed.
+  await runPaidVerifierForEmail(emailId);
 
   // idempotencyKey is generated once here, at prepare time, and never
   // touched again on re-prepare — it identifies the logical payment, not
@@ -107,8 +114,19 @@ export async function confirmPayment(emailId: string, _formData: FormData): Prom
       });
     }
   }
+  // Confirm is also a valid pre-payment trigger for intents prepared before
+  // paid verification was wired, while the runner reuses existing evidence so
+  // Prepare → Confirm does not pay for the same checks twice.
+  await runPaidVerifierForEmail(emailId);
   await executePreparedPayment(emailId);
   revalidatePath("/");
+}
+
+/** Runs the paid verifier when the owner opens a queue row's review drawer. */
+export async function runPaidVerificationAction(emailId: string): Promise<VerificationResult> {
+  const result = await runPaidVerifierForEmail(emailId);
+  revalidatePath("/");
+  return result.verification;
 }
 
 const REVIEW_ACTIONS = {

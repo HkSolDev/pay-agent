@@ -186,6 +186,36 @@ describe("Level 1 payment-detail extractor contract", () => {
     if (expected.referenceNumber === null) expect(result.referenceNumberConfidence).toBe(0);
   });
 
+  it("treats Account holder as an explicit payee label in bank-transfer invoice text", async () => {
+    const result = await extractPaymentDetails({
+      kind: "invoice",
+      fromName: "Accounts Payable",
+      subject: "Invoice INV-HR-TEST-01",
+      bodyText: `Where the money goes
+Account holder
+Hemant Kumar
+Bank
+State Bank of India
+Account number 37472619611
+IFSC code SBIN0050341`,
+    });
+
+    expect(result.payeeName).toBe("Hemant Kumar");
+    expect(result.payeeNameConfidence).toBe(0.9);
+  });
+
+  it("keeps the 0.75 sender fallback for an unresolved payee with no recognized label", async () => {
+    const result = await extractPaymentDetails({
+      kind: "invoice",
+      fromName: "Accounts Receivable",
+      subject: "Invoice INV-42",
+      bodyText: "Vendor contact\nHemant Kumar\nTotal due: INR 500",
+    });
+
+    expect(result.payeeName).toBe("Accounts Receivable");
+    expect(result.payeeNameConfidence).toBe(0.75);
+  });
+
   it("treats a source-text invoice reference as evidence, not an LLM-style estimate", async () => {
     const result = await extractPaymentDetails({
       kind: "invoice",

@@ -37,4 +37,57 @@ describe("Level 1 dry-run pipeline", () => {
     expect(result.resolution).toEqual({ status: "multiple_payment_methods" });
     expect(result.decision).toBe("needs_approval");
   });
+
+  it("treats an exact resolved sender-and-rail match as sufficient payee identity evidence", async () => {
+    const originalAutoPayMode = process.env.AUTO_PAY_MODE;
+    const originalDemoMode = process.env.DEMO_MODE;
+    process.env.AUTO_PAY_MODE = "on";
+    process.env.DEMO_MODE = "";
+    try {
+      const extracted = {
+        payeeName: "Accounts Receivable",
+        payeeNameConfidence: 0.75,
+        amount: { currency: "INR" as const, value: "5000.00" },
+        amountConfidence: 0.95,
+        referenceNumber: "INV-1",
+        referenceNumberConfidence: 0.95,
+        paymentMethods: [{ kind: "upi" as const, vpa: "riya@okaxis" }],
+        paymentMethodConfidence: 0.95,
+        issueDate: null,
+        issueDateConfidence: 0,
+        dueDate: "2026-09-05",
+        dueDateConfidence: 0.95,
+      };
+      const result = await processLevel1({
+        emailId: "email-resolved-low-payee-confidence",
+        extractionInput,
+        classification,
+        auth: { dmarc: "dmarc=pass header.from=riya.example", spf: null, dkim: null },
+        replyTo: null,
+        links: [],
+        approvedPayees: [{
+          payeeId: "riya-1",
+          senderAddr: "billing@riya.example",
+          recipientNickname: "riya-perflo",
+          paymentMethod: { kind: "upi", vpa: "riya@okaxis" },
+          grant: {
+            autoPayEnabled: true,
+            payeeStatus: "approved",
+            perPaymentCapInr: null,
+            totalCapInr: null,
+            maxPayments: null,
+            expiresAt: null,
+          },
+        }],
+        duplicateHistory: [],
+      }, async () => extracted);
+
+      expect(result.resolution).toEqual({ status: "resolved", payeeId: "riya-1", recipientNickname: "riya-perflo" });
+      expect(result.decision).toBe("auto_pay");
+      expect(result.reasons).not.toContain("payeeName confidence (0.75) below 0.9.");
+    } finally {
+      process.env.AUTO_PAY_MODE = originalAutoPayMode;
+      process.env.DEMO_MODE = originalDemoMode;
+    }
+  });
 });
