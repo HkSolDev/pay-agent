@@ -172,10 +172,28 @@ describe("createPayeeAction — never touches payment execution", () => {
     await cleanupSender(senderAddr);
   });
 
+  it("links an existing Perflo beneficiary nickname and skips beneficiary creation", async () => {
+    const { createPerfloBeneficiary } = await import("../../worker/src/perflo-cli");
+    vi.mocked(createPerfloBeneficiary).mockClear();
+
+    await createPayeeAction(baseFormData({
+      useExistingBeneficiary: "on",
+      recipientNickname: "hemant-real",
+    }));
+
+    const identity = await prisma.payeeIdentity.findUniqueOrThrow({ where: { senderAddr } });
+    await waitUntilGrantSettled(identity.payeeId);
+    const payee = await prisma.payee.findUniqueOrThrow({ where: { id: identity.payeeId } });
+    expect(payee.recipientNickname).toBe("hemant-real");
+    expect(payee.status).toBe("approved");
+    expect(createPerfloBeneficiary).not.toHaveBeenCalled();
+  });
+
   it("rejects submission without owner confirmation, before writing anything", async () => {
     await expect(createPayeeAction(baseFormData({ ownerConfirmed: "" }))).rejects.toThrow();
     await expect(prisma.payeeIdentity.findUnique({ where: { senderAddr } })).resolves.toBeNull();
   });
+
 
   it("rejects an invalid rail with a descriptive error, before writing anything", async () => {
     await expect(createPayeeAction(baseFormData({ rail: "upi", vpa: "billing@gmail.com" }))).rejects.toThrow(/UPI/);

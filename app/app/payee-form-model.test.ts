@@ -48,7 +48,22 @@ describe("payee form validation — required fields", () => {
     expect(validatePayeeForm({ ...validUpi, maxPayments: "0" }).errors.maxPayments).toBeTruthy();
     expect(validatePayeeForm({ ...validUpi, expiresAt: "not-a-date" }).errors.expiresAt).toBeTruthy();
   });
+
+  it("requires recipientNickname when useExistingBeneficiary is true", () => {
+    const missing = validatePayeeForm({ ...validUpi, useExistingBeneficiary: true, recipientNickname: "" });
+    expect(missing.valid).toBe(false);
+    expect(missing.errors.recipientNickname).toBeTruthy();
+
+    const blank = validatePayeeForm({ ...validUpi, useExistingBeneficiary: true, recipientNickname: "   " });
+    expect(blank.valid).toBe(false);
+    expect(blank.errors.recipientNickname).toBeTruthy();
+
+    const valid = validatePayeeForm({ ...validUpi, useExistingBeneficiary: true, recipientNickname: "hemant-real" });
+    expect(valid.valid).toBe(true);
+    expect(valid.errors.recipientNickname).toBeUndefined();
+  });
 });
+
 
 describe("payee form validation — inline rail errors", () => {
   it("rejects an ordinary email address as a UPI VPA with an inline error", () => {

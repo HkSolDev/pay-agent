@@ -129,6 +129,9 @@ export const realApprovePayeeDeps: ApprovePayeeDeps = {
   },
 
   async createPerfloRecipient(request) {
+    if (request.useExistingBeneficiary && request.recipientNickname) {
+      return { recipientNickname: request.recipientNickname.trim() };
+    }
     const { accountNumber, ifsc } = beneficiaryFieldsFromRequest(request);
     const nickname = `${slugify(request.name)}-${randomBytes(3).toString("hex")}`;
     await createPerfloBeneficiary({ nickname, firstName: request.firstName, lastName: request.lastName, accountNumber, ifsc });
@@ -163,7 +166,7 @@ export const realApprovePayeeDeps: ApprovePayeeDeps = {
 
     const existingIdentity = await prisma.payeeIdentity.findUnique({
       where: { senderAddr: input.senderAddr },
-      select: { payeeId: true, payee: { select: { status: true } } },
+      select: { payeeId: true, payee: { select: { status: true, recipientNickname: true } } },
     });
 
     if (existingIdentity) {
@@ -179,11 +182,15 @@ export const realApprovePayeeDeps: ApprovePayeeDeps = {
         return { status: "locked" };
       }
 
+      const nicknameToUse = input.useExistingBeneficiary
+        ? (input.recipientNickname?.trim() || existingIdentity.payee.recipientNickname)
+        : input.recipientNickname;
+
       let claimed: { count: number };
       try {
         claimed = await prisma.payee.updateMany({
           where: { id: existingIdentity.payeeId, status: "not_approved" },
-          data: { name: input.name, recipientNickname: input.recipientNickname, ...grantFields },
+          data: { name: input.name, recipientNickname: nicknameToUse, ...grantFields },
         });
       } catch (err) {
         if (isPendingGrantLockViolation(err)) return { status: "locked" };
@@ -209,7 +216,7 @@ export const realApprovePayeeDeps: ApprovePayeeDeps = {
         });
       }
 
-      return { status: "started", payeeId: existingIdentity.payeeId };
+      return { status: "started", payeeId: existingIdentity.payeeId, recipientNickname: nicknameToUse };
     }
 
     try {
@@ -228,12 +235,13 @@ export const realApprovePayeeDeps: ApprovePayeeDeps = {
           },
         },
       });
-      return { status: "started", payeeId: payee.id };
+      return { status: "started", payeeId: payee.id, recipientNickname: input.recipientNickname };
     } catch (err) {
       if (isPendingGrantLockViolation(err)) return { status: "locked" };
       throw err;
     }
   },
+
 
   // Returns the promise it kicks off so tests can await the full
   // fire-and-forget chain deterministically (production callers ignore the
