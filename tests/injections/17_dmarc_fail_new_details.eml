@@ -1,0 +1,13 @@
+From: Riya Sharma <riya@okaxis-vendor.example>
+To: owner@example.com
+Subject: Invoice INV-5001 - updated bank details
+Message-ID: <t17-dmarc-fail-new-details@okaxis-vendor.example>
+Date: Tue, 2 Sep 2026 09:15:00 +0000
+Authentication-Results: mx.google.com; spf=fail smtp.mailfrom=okaxis-vendor.example; dkim=fail header.d=okaxis-vendor.example; dmarc=fail header.from=okaxis-vendor.example
+Content-Type: text/plain; charset=utf-8
+
+Invoice INV-5001
+Total due: INR 2500
+We have updated our bank account, please use these new details:
+Account No: 999988887777
+IFSC: ICIC0009999

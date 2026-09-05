@@ -102,12 +102,17 @@ export async function processLevel1(
   const resolution: ResolveResult = extraction.paymentMethods.length === 1
     ? resolvePayee({ senderAddr: input.extractionInput.fromAddr ?? "", paymentMethod: extraction.paymentMethods[0], allowAnySender: process.env.DEMO_MODE === "true" }, input.approvedPayees)
     : extraction.paymentMethods.length > 1 ? { status: "multiple_payment_methods" } : { status: "new_payee" };
-  // A changed rail and an unresolved multi-rail invoice are ordinary owner
-  // review cases. The resolver already carries the decisive status; do not
-  // let the verifier's generic mismatch evidence upgrade those cases to
-  // quarantine. A sender/rail belonging to different payees remains a
-  // quarantine through identity_method_conflict.
-  if (resolution.status === "details_changed" || resolution.status === "multiple_payment_methods") {
+  // An unresolved multi-rail invoice is always ordinary owner review: there
+  // was never one approved method to compare against, so the mismatch
+  // signal is noise regardless of auth. A changed rail from an
+  // already-known sender (`details_changed`) is also ordinary owner review
+  // — PRD Section 8.1 row #3 — but only when the message itself
+  // authenticates; a details change riding on a DMARC/SPF+DKIM alignment
+  // failure is the takeover pattern PRD Section 15 T-17 requires hard
+  // quarantine for, so the hard fail must survive in that case instead of
+  // being stripped like a legitimate detail update. A sender/rail belonging
+  // to different payees remains a quarantine through identity_method_conflict.
+  if (resolution.status === "multiple_payment_methods" || (resolution.status === "details_changed" && verification.authPassed)) {
     verification.hardFails = verification.hardFails.filter((fail) => fail !== "payment_method_mismatch");
   }
   const resolvedPayeeId = resolution.status === "resolved" ? resolution.payeeId : null;
