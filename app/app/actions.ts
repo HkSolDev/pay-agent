@@ -48,11 +48,25 @@ export async function preparePayment(formData: FormData) {
   // touched again on re-prepare — it identifies the logical payment, not
   // the attempt (same principle FR-23 uses for the real idempotency key).
   const idempotencyKey = randomBytes(16).toString("hex");
-  await prisma.paymentIntent.upsert({
-    where: { emailId },
-    create: { emailId, recipientNickname: payee.recipientNickname, amount, currency, idempotencyKey },
-    update: { recipientNickname: payee.recipientNickname, amount, currency },
+  // Guarded, not a plain upsert: once a row has left "pending"/"failed"
+  // (claimed, paid, or unknown_outcome), its payable fields are the record
+  // of what was actually claimed/paid and must never be silently rewritten
+  // by a later re-extraction or re-prepare of the same invoice. The
+  // conditional updateMany only touches a row still eligible for a fresh
+  // prepare; if it matches nothing, the upsert below either creates the
+  // row for the first time or — if it already exists but is locked — is a
+  // genuine no-op on it.
+  const repaired = await prisma.paymentIntent.updateMany({
+    where: { emailId, status: { in: ["pending", "failed"] } },
+    data: { recipientNickname: payee.recipientNickname, amount, currency },
   });
+  if (repaired.count === 0) {
+    await prisma.paymentIntent.upsert({
+      where: { emailId },
+      create: { emailId, recipientNickname: payee.recipientNickname, amount, currency, idempotencyKey },
+      update: {},
+    });
+  }
   revalidatePath("/");
 }
 
@@ -80,9 +94,15 @@ export async function confirmPayment(emailId: string, _formData: FormData): Prom
     const sourceAmount = summary.amount;
     const amount = typeof sourceAmount?.value === "string" ? sourceAmount.value : "";
     const currency = sourceAmount?.currency === "USD" ? "USD" : sourceAmount?.currency === "INR" ? "INR" : "";
+    // Same guard as preparePayment's, and for the same reason: only a row
+    // still "pending" or "failed" gets its payable fields repaired here.
+    // Once claimed/paid/unknown_outcome, they're the record of what was
+    // actually claimed/paid, not something a stale-field repair should ever
+    // touch again — updateMany (not update) so a row that doesn't match
+    // simply isn't touched, rather than throwing on a locked row.
     if (payee && currency && validatePaymentInput(payee.recipientNickname, amount).ok) {
-      await prisma.paymentIntent.update({
-        where: { emailId },
+      await prisma.paymentIntent.updateMany({
+        where: { emailId, status: { in: ["pending", "failed"] } },
         data: { recipientNickname: payee.recipientNickname, amount, currency },
       });
     }
