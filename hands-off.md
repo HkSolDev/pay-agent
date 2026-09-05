@@ -1,7 +1,30 @@
 # Perflo AP Agent — Hands-off Handoff
 
-Last verified: 2026-09-05, later the same day (fixed a real critical bug flagged by an independent security review: post-payment persistence-write failure was misclassified `"failed"` instead of `"unknown_outcome"`; test-first, red then green; **not yet committed, reported back for verification per explicit instruction**)
-Branch: `feat/perflo-beneficiary-approval` — verified via `git status` and `git log --oneline -5` just before writing this line. HEAD is `1b9db99`. `git status` shows this session's own changes (`worker/src/payment-execution.ts`, new `worker/src/payment-execution.test.ts`) plus separate uncommitted drift from other concurrent sessions (`app/app/payee-actions.test.ts`, `worker/src/payee-approval-deps.ts`, `worker/src/payee-approval-deps.enable-grant.test.ts`, an untracked `.codex/` directory) — confirmed via `git diff --stat` to carry zero lines from this task.
+Last verified: 2026-09-05, later the same day (fixed two more real findings from the payment-execution security review: stale `claimed` rows had no recovery path, and `preparePayment`/`confirmPayment` could silently rewrite a claimed/paid row's payable fields; test-first, red then green for both; **not yet committed, reported back for verification per explicit instruction**)
+Branch: `feat/perflo-beneficiary-approval` — verified via `git status` and `git log --oneline -5` just before writing this line. HEAD is `52aa71d`. `git status` shows this session's own changes (`worker/src/payment-reconcile.ts`, `worker/src/payment-reconcile.test.ts`, `app/app/actions.ts`, new `app/app/actions.test.ts`) interleaved with a different, concurrent session's own Perflo-reconciliation work in the same `payment-reconcile.ts` file (`isReconcilableProviderReference`, `razorpayExecutorFromEnv`'s Perflo fallback) and separate uncommitted work in `worker/src/perflo-cli.ts`/`payment-executor-perflo.ts` and a new `app/app/login/`/`app/lib/`/`app/middleware.ts` (apparently an auth system in progress) from other sessions entirely — confirmed via `git diff --stat` that this task's own contribution to `worker/src/perflo-cli.ts`, `worker/src/payment-executor-perflo.ts`, and `worker/src/payment-execution.ts` (the explicitly off-limits files for this task) is exactly zero lines.
+
+## Session summary — 2026-09-05, later the same day (fixed: stale claimed-row recovery gap, and unguarded payable-field rewrites in preparePayment/confirmPayment)
+
+**What this session did, in one sentence:** fixed two of the three remaining findings from the same payment-execution security review — a `claimed` PaymentIntent row had no expiry or recovery path if the worker crashed mid-payment, and `preparePayment`/`confirmPayment` could silently overwrite a claimed/paid row's recipient/amount/currency with no status check at all.
+
+**Read `docs/DECISIONS.md`'s entry titled "Fixed: stale `claimed` rows had no recovery path; `preparePayment`/`confirmPayment` could silently rewrite a claimed/paid row's payable fields"** for the full technical reasoning, exact line references, and the TOCTOU analysis on the guarded-write-plus-fallback-upsert shape — this section is the narrative/status version.
+
+**Why did it this way, for the next session's benefit:**
+- **`/graphify` + direct code read** confirmed the exact mechanism before writing any test: `claimPaymentIntent` already sets `claimedAt` at claim time (no schema change needed), and `reconcileStuckPayments` genuinely only ever queried `unknown_outcome` — its own doc comment explicitly called the `claimed`-row gap "a known gap, left for when it's actually needed." This was that need.
+- **Chose to promote a stale claim into the existing `unknown_outcome` state rather than inventing a new one** — the schema's own comment already documents `claimed -> paid | failed | unknown_outcome` as a legal transition, so this is a new *path* into an already-valid state, not a new edge in the state machine, which meaningfully lowers the risk of the change.
+- **`worker/src/payment-claim.ts` needed zero changes** — its "claimed before the provider call" ordering is correct and required (that's what prevents double-claiming), not the bug; the bug was purely the missing downstream recovery path, which belongs in `payment-reconcile.ts` where the existing `expireStalePendingGrants` precedent (same shape: conditional `updateMany` on an age check) already lived for a different resource.
+- **Test-first for both bugs**, confirmed red for the actual reason each time: the claim-staleness test failed with `expected 0 to be greater than or equal to 1` (feature genuinely missing); the three `actions.test.ts` "never rewrites" cases failed with the literal wrong value showing up (`expected '999999' to be '500'`) — proof the tests reproduce the real bug, not a typo.
+- **Found a real gap in my own test coverage mid-review** (`/payment-review`'s checklist): `confirmPayment`'s guard against an already-*paid* row wasn't tested even though `preparePayment`'s was — added it before finishing, not after.
+- **Explicitly reasoned through the TOCTOU question the task itself raised**: does the two-step guarded-`updateMany`-then-fallback-`upsert` in `preparePayment` introduce a new race? Conclusion, written out in `DECISIONS.md`: no — Postgres's per-statement row locking keeps each step atomic against its own WHERE clause, and the fallback's empty `update: {}` can never rewrite a locked row's fields regardless of interleaving; the only raciness that exists (two truly concurrent first-time prepares) is identical to what the original plain `upsert` already had.
+- **`/ponytail-review`**: "Lean already. Ship." — every candidate simplification would have abandoned an established codebase convention (atomic conditional writes over check-then-write) or reintroduced the exact race being fixed.
+- **Stayed out of the explicitly off-limits files** (`perflo-cli.ts`, `payment-executor-perflo.ts` — "another agent owns the Perflo-reconciliation bug there" — and `payment-execution.ts`, already fixed/committed) — confirmed via `git diff --stat` showing zero lines from this task in any of them, even though `payment-reconcile.ts` itself was independently, concurrently modified by that other agent's work and had to be rebased onto mid-task.
+
+**Verification actually performed, not just claimed:**
+- `npx vitest run worker/src/payment-reconcile.test.ts --no-file-parallelism`: red before the fix (`expected 0 to be greater than or equal to 1`), 8/8 green after (6 pre-existing, 1 from the concurrent Perflo-reconciliation session, 2 new).
+- `npx vitest run app/app/actions.test.ts --no-file-parallelism`: red before the fix (3 of 6 failing with the literal wrong values), 7/7 green after (added the 7th, "already paid", mid-review).
+- `npx tsc --noEmit` clean for both `worker/tsconfig.json` and `app/tsconfig.json`.
+- `pnpm test` (full suite) twice: `4 failed | 351 passed (355)` both times, identical — the same 4 pre-existing, already-documented `payee-store`/`demo-scenarios` failures from earlier work, unrelated to this change.
+- Nothing committed — reporting back for verification per the task's explicit instruction.
 
 ## Session summary — 2026-09-05, later the same day (fixed: post-payment persistence-write failure misclassified as "failed")
 
@@ -942,3 +965,35 @@ Verification: branch `feat/perflo-beneficiary-approval`, HEAD `1b9db99`. Focused
 - `smoke_payee_invalid_formats_validation_1788589101932.png`
 - `smoke_payee_unconfirmed_validation_1788589346243.png`
 - `smoke_payee_created_success_1788589880939.png`
+
+## Session summary — 2026-09-05 (Perflo unknown-outcome reconciliation)
+
+Fixed the earlier payment-review finding in the allowed files only. `worker/src/perflo-cli.ts` now retains a returned tx hash on `PerfloUnknownOutcomeError` and implements a read-only `perflo --json tx status <txHash>` lookup. `worker/src/payment-executor-perflo.ts` carries that hash through `unknown` and implements `getPayoutStatus`. `worker/src/payment-reconcile.ts` skips only references equal to the local idempotency placeholder and returns a Perflo status executor when Razorpay is not fully configured, so the existing worker and Sync Now paths run reconciliation for Perflo.
+
+CLI evidence: `perflo tx status <txHash>` is available and authoritative; statuses are `submitted`, `processing`, `executing`, `success`, and `failed`. `perflo activity` has only `--limit` and no exact-reference lookup, so it is not used for deterministic reconciliation. If Perflo returns only a payment ID and no tx hash, that real ID is preserved but the present CLI cannot query it exactly.
+
+Red/green evidence: the preservation test failed with `Received: "idem-key-1"` instead of `"0xabc123"`; the classifier test failed with `undefined` instead of `"0xghi789"`; the status/reconciliation tests failed on the previous unsupported/null/filter behavior. Focused unit verification is green: 3 files, 32/32 tests. The Postgres integration run required Docker/socket access; its new Perflo-hash reconciliation test passes and the file reports 7/8 passing. The remaining failure is a concurrently-added stale-claim test owned by another session, unrelated to this change. `pnpm typecheck` exits cleanly. No commit was made.
+
+## Session summary — 2026-09-05 (Shared-Password Access Gate)
+
+**What this session did, in one sentence:** Added a minimal, host-level shared-password gate via Next.js middleware and a dedicated login page to protect all queue views and live payment actions before public deployment, with zero new dependencies, zero user tables, and zero edits to off-limits worker or queue-view files.
+
+**Architecture & Security Details:**
+- **Middleware (`app/middleware.ts`)**: Intercepts unauthenticated requests before any page loads, verifying an HMAC-SHA256 signed session cookie (`perflo_access`) using the Web Crypto API (`crypto.subtle`). Edge- and Node-runtime compatible.
+- **Login Page (`app/app/login/page.tsx`, `login-form.tsx`, `actions.ts`, `login.css`)**: Minimal, distraction-free entry page adhering strictly to Perflo's organic design tokens (`Caprasimo` serif heading, `Figtree` sans body, `#f5ead8` background, `#ebddc5` surface card, `#c67139` terracotta button). Supports inline error feedback, password visibility toggle, autoFocus, and redirect preserves destination (`?next=`).
+- **Signing & Session Token (`app/lib/auth.ts`)**: Generates tokens containing timestamp, entropy nonce, and an HMAC-SHA256 signature keyed by `APP_ACCESS_PASSWORD`. Validates signature in constant time and enforces 30-day session lifetime with clock-drift protection.
+- **Strict Scope Preservation**: Did NOT touch `app/app/actions.ts`, `app/app/queue-view.tsx`, or any files under `worker/src`.
+- **Configuration**: Documented `APP_ACCESS_PASSWORD` in `.env.example` and set local test value in `.env`.
+
+**Live Browser Verification:**
+1. **Blocked state**: Direct navigation to `http://localhost:3000/` or `http://localhost:3000/payees` without cookie is blocked by middleware and redirected to `http://localhost:3000/login`.
+2. **Invalid password**: Submitting `wrong-password` triggers inline alert (`Incorrect password. Please try again.`) with zero page crash or unhandled error.
+3. **Unlocked state**: Submitting correct password (`perflo-access-2026`) sets HTTP-only `perflo_access` cookie and redirects to `/`, revealing the full review queue with all 16 needs-approval rows and payment controls.
+4. **Cookie persistence**: Page reload (`F5`) stays on `/` without re-prompting; navigating to `/payees` allows full access.
+
+**Artifacts captured:**
+- Blocked login page: `blocked_login_page_1788591809609.png`
+- Error validation state: `login_error_state.png`
+- Unlocked review queue: `unlocked_review_queue_1788591880734.png`
+- Browser session recording: `auth_gate_demo_1788591736150.webp`
+
