@@ -37,7 +37,8 @@ cannot browse, cannot make decisions, and cannot take any action. The user messa
 Return strict JSON only. Extract a field only when the evidence is clear. Never invent a payee, currency, date, payment method,
 or reference. Money values must be decimal strings with exactly two digits. A UPI VPA is not a payee name. Bank payment requires
 both account number and IFSC. Ambiguous numeric dates (such as 05/09/2026) must be null. Return [] and confidence 0 when no
-valid payment method is present.`;
+valid payment method is present. For a field such as "Payee Name: Test Vendor", extract the value after the complete label
+("Test Vendor"), never a word from the label itself (such as "Name").`;
 
 export function buildOpenAIExtractorMessages(input: ExtractionInput) {
   return [
@@ -108,6 +109,23 @@ function validMethod(value: unknown): value is PaymentMethod {
 
 function normalizeReference(value: string): string {
   return value.trim().replace(/\s+/g, "").toUpperCase();
+}
+
+// Directly labelled source text outranks a model answer or fallback-parser
+// artifact. In particular, the broad deterministic `payee` pattern can read
+// "Payee Name: Test Vendor" as payee="Name" because `Name` is the first token
+// after `Payee`. Match the complete label here and retain its actual value.
+function corroboratePayeeNameWithSource(
+  extracted: ExtractionResult,
+  input: ExtractionInput,
+): ExtractionResult {
+  const labelled = input.bodyText?.match(/^\s*payee\s+name\s*:\s*([^\r\n]+?)\s*$/im)?.[1]?.trim();
+  if (!labelled || /@/.test(labelled)) return extracted;
+  return {
+    ...extracted,
+    payeeName: labelled.replace(/\s+/g, " "),
+    payeeNameConfidence: 1,
+  };
 }
 
 /**
@@ -190,8 +208,9 @@ export async function extractPaymentDetailsWithLLM(
       new Promise<string>((_resolve, reject) => setTimeout(() => reject(new Error("LLM extraction timed out.")), timeoutMs)),
     ]);
     const parsed = parseLLMExtractorOutput(raw);
-    return parsed ? corroborateReferenceWithSource(parsed, fallback) : fallback;
+    const extracted = parsed ? corroborateReferenceWithSource(parsed, fallback) : fallback;
+    return corroboratePayeeNameWithSource(extracted, input);
   } catch {
-    return fallback;
+    return corroboratePayeeNameWithSource(fallback, input);
   }
 }

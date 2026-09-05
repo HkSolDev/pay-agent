@@ -109,6 +109,21 @@ describe("LLM payment-detail extractor", () => {
     expect(unavailable.referenceNumber).toBe("INV-42");
   });
 
+  it("extracts the value after an explicit Payee Name label instead of the label token", async () => {
+    const result = await extractPaymentDetailsWithLLM({
+      ...payable,
+      fromName: "Accounts Receivable",
+      bodyText: "Payee Name: Test Vendor\nTotal due: INR 500\nUPI: testvendor@okaxis",
+    }, {
+      // Reproduce the production fallback path seen when the model call is
+      // unavailable: the source parser used to return the literal `Name`.
+      callLLM: async () => { throw new Error("model unavailable"); },
+    });
+
+    expect(result.payeeName).toBe("Test Vendor");
+    expect(result.payeeName).not.toBe("Name");
+  });
+
   it("falls back rather than holding the worker when the model exceeds its deadline", async () => {
     const result = await extractPaymentDetailsWithLLM(payable, {
       callLLM: async () => new Promise<string>(() => {}),
