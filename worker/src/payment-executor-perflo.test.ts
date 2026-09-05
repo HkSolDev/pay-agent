@@ -51,8 +51,28 @@ describe("Perflo payment executor adapter", () => {
     expect(result.status).toBe("unknown");
   });
 
-  it("getPayoutStatus is not supported by the Perflo CLI path and says so rather than guessing", async () => {
-    const executor = createPerfloExecutor({ recipientNickname: "riya-sharma", payViaPerfloCli: vi.fn() });
-    await expect(executor.getPayoutStatus("perflo-1")).rejects.toThrow(/not supported/i);
+  it("preserves Perflo's real transaction reference on an unknown outcome instead of replacing it with the idempotency key", async () => {
+    const error = Object.assign(new PerfloUnknownOutcomeError("still processing"), {
+      paymentReference: "0xabc123",
+    });
+    const payViaPerfloCli = vi.fn().mockRejectedValue(error);
+    const executor = createPerfloExecutor({ recipientNickname: "riya-sharma", payViaPerfloCli });
+
+    const result = await executor.createPayout(request);
+
+    expect(result).toEqual({
+      providerReference: "0xabc123",
+      status: "unknown",
+      failureReason: "still processing",
+    });
+  });
+
+  it("queries Perflo transaction status using the preserved provider reference", async () => {
+    const getPayoutStatusViaPerfloCli = vi.fn().mockResolvedValue({ providerReference: "0xabc123", status: "paid" });
+    const config = { recipientNickname: "riya-sharma", payViaPerfloCli: vi.fn(), getPayoutStatusViaPerfloCli };
+    const executor = createPerfloExecutor(config);
+
+    await expect(executor.getPayoutStatus("0xabc123")).resolves.toEqual({ providerReference: "0xabc123", status: "paid" });
+    expect(getPayoutStatusViaPerfloCli).toHaveBeenCalledWith("0xabc123");
   });
 });

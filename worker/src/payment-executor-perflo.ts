@@ -1,5 +1,11 @@
 import type { CreatePayoutRequest, PayoutResult, PaymentExecutor } from "./payment-executor";
-import { PerfloDefiniteFailure, PerfloUnknownOutcomeError, type PerfloPayResult } from "./perflo-cli";
+import {
+  getPerfloTxStatus,
+  PerfloDefiniteFailure,
+  PerfloUnknownOutcomeError,
+  type PerfloPayResult,
+  type PerfloTxStatusResult,
+} from "./perflo-cli";
 
 /** Integer minor units -> the decimal string Perflo's CLI/`--amount` flag expects. */
 function minorUnitsToDecimalString(amountMinor: bigint): string {
@@ -20,6 +26,7 @@ export interface PerfloExecutorConfig {
     currency: string;
     idempotencyKey?: string;
   }) => Promise<PerfloPayResult>;
+  getPayoutStatusViaPerfloCli?: (paymentReference: string) => Promise<PerfloTxStatusResult>;
 }
 
 /**
@@ -41,7 +48,7 @@ export function createPerfloExecutor(config: PerfloExecutorConfig): PaymentExecu
         return { providerReference: result.paymentReference, status: "paid" };
       } catch (error) {
         if (error instanceof PerfloUnknownOutcomeError) {
-          return { providerReference: request.idempotencyKey, status: "unknown", failureReason: error.message };
+          return { providerReference: error.paymentReference ?? request.idempotencyKey, status: "unknown", failureReason: error.message };
         }
         if (error instanceof PerfloDefiniteFailure) {
           return { providerReference: request.idempotencyKey, status: "failed", failureReason: error.message };
@@ -50,8 +57,8 @@ export function createPerfloExecutor(config: PerfloExecutorConfig): PaymentExecu
       }
     },
 
-    async getPayoutStatus(): Promise<PayoutResult> {
-      throw new Error("getPayoutStatus is not supported by the Perflo CLI path — it has no status-polling command.");
+    async getPayoutStatus(providerReference: string): Promise<PayoutResult> {
+      return (config.getPayoutStatusViaPerfloCli ?? getPerfloTxStatus)(providerReference);
     },
   };
 }

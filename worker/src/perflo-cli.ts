@@ -7,6 +7,12 @@ export interface PerfloPayResult {
   paymentReference: string;
 }
 
+export interface PerfloTxStatusResult {
+  providerReference: string;
+  status: "processing" | "paid" | "failed" | "unknown";
+  failureReason?: string;
+}
+
 interface PerfloJsonError {
   ok: false;
   error: { code: string; message: string; recoverable: boolean };
@@ -25,7 +31,11 @@ export class PerfloDefiniteFailure extends Error {}
  * result → unknown_outcome, reconcile, never retried." Retrying this blind
  * is exactly how a real payment gets sent twice.
  */
-export class PerfloUnknownOutcomeError extends Error {}
+export class PerfloUnknownOutcomeError extends Error {
+  constructor(message: string, public readonly paymentReference?: string) {
+    super(message);
+  }
+}
 
 /**
  * Confirmed by direct reproduction: npm/npx warning noise ("npm warn Unknown
@@ -102,10 +112,66 @@ export function classifyPerfloStdout(...rawOutput: string[]): PerfloPayResult {
     // function assuming success just because a txHash came back.
     throw new PerfloUnknownOutcomeError(
       `Perflo returned a reference but confirmed:false (status: ${String(parsed.status)}) — outcome unresolved, reference: ${reference}`,
+      reference,
     );
   }
 
   return { paymentReference: reference };
+}
+
+/** Maps `perflo --json tx status <txHash>` onto the provider-neutral payout states. */
+export function classifyPerfloTxStatusStdout(paymentReference: string, ...rawOutput: string[]): PerfloTxStatusResult {
+  const jsonLine = extractJsonLine(...rawOutput);
+  if (jsonLine === null) {
+    throw new PerfloUnknownOutcomeError("Perflo transaction status returned no parseable JSON.", paymentReference);
+  }
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(jsonLine) as Record<string, unknown>;
+  } catch {
+    throw new PerfloUnknownOutcomeError("Perflo transaction status returned unparseable output.", paymentReference);
+  }
+
+  if (parsed.ok === false) {
+    const error = (parsed as unknown as PerfloJsonError).error;
+    throw new Error(`Perflo transaction status lookup failed: ${error.message} (${error.code})`);
+  }
+
+  const providerReference = typeof parsed.txHash === "string" ? parsed.txHash : paymentReference;
+  switch (parsed.status) {
+    case "success":
+      return { providerReference, status: "paid" };
+    case "failed":
+      return { providerReference, status: "failed", failureReason: "Perflo transaction failed." };
+    case "submitted":
+    case "processing":
+    case "executing":
+      return { providerReference, status: "processing" };
+    default:
+      return { providerReference, status: "unknown", failureReason: `Unrecognized Perflo transaction status: ${String(parsed.status)}` };
+  }
+}
+
+/** Read-only authoritative lookup for a Perflo transaction already submitted. */
+export async function getPerfloTxStatus(paymentReference: string): Promise<PerfloTxStatusResult> {
+  const [cmd, ...prefixArgs] = (process.env.PERFLO_CLI_PATH ?? "npx @perflo/cli@latest").split(" ");
+  const cliArgs = [...prefixArgs, "--json", "tx", "status", paymentReference];
+
+  try {
+    const result = await execFileAsync(cmd, cliArgs, { timeout: 60_000 });
+    return classifyPerfloTxStatusStdout(paymentReference, result.stdout, result.stderr);
+  } catch (error) {
+    if (error instanceof PerfloUnknownOutcomeError) throw error;
+    const execError = error as { stdout?: string; stderr?: string; message: string; killed?: boolean };
+    if (execError.killed) {
+      throw new PerfloUnknownOutcomeError("Perflo transaction status lookup timed out.", paymentReference);
+    }
+    if (execError.stdout !== undefined || execError.stderr !== undefined) {
+      return classifyPerfloTxStatusStdout(paymentReference, execError.stdout ?? "", execError.stderr ?? "");
+    }
+    throw error;
+  }
 }
 
 /**
