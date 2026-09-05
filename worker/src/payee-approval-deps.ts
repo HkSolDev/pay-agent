@@ -235,9 +235,14 @@ export const realApprovePayeeDeps: ApprovePayeeDeps = {
     }
   },
 
+  // Returns the promise it kicks off so tests can await the full
+  // fire-and-forget chain deterministically (production callers ignore the
+  // return value, per ApprovePayeeDeps's `void` signature — this can't
+  // become a real await there without blocking the request on Perflo's own
+  // ~11-minute browser-approval wait).
   enablePerfloGrant(input) {
     const expiresDays = grantExpiresDays(input.grant.expiresAt);
-    enableGrantViaPerfloCli({
+    return enableGrantViaPerfloCli({
       nickname: input.recipientNickname,
       perPaymentCapInr: input.grant.perPaymentCapInr,
       totalCapInr: input.grant.totalCapInr,
