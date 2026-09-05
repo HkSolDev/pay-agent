@@ -22,19 +22,37 @@ const SHARED_PENDING_GRANT_LOCK_FILES = [
   "app/app/payee-actions.test.ts",
 ];
 
+// These files stub PAYEE_ENCRYPTION_KEY/PAYEE_HASH_KEY by mutating the
+// process-global `process.env` in beforeEach/afterEach. That mutation isn't
+// scoped to the file — vitest can schedule multiple files concurrently in
+// the same worker, so one file's key can get clobbered mid-test by another
+// file's beforeEach (payee-crypto.test.ts even uses a different key value
+// and deletes the var entirely in one case), producing an intermittent
+// "Unsupported state or unable to authenticate data" GCM auth failure in
+// whichever file lost the race. Serializing them removes the race the same
+// way SHARED_PENDING_GRANT_LOCK_FILES does for the DB constraint above.
+const SHARED_PAYEE_CRYPTO_ENV_FILES = [
+  "worker/src/payee-crypto.test.ts",
+  "worker/src/payee-rail-lifecycle.integration.test.ts",
+  "worker/src/demo-scenarios.integration.test.ts",
+  "worker/src/payee-store.integration.test.ts",
+];
+
+const SERIALIZED_FILES = [...SHARED_PENDING_GRANT_LOCK_FILES, ...SHARED_PAYEE_CRYPTO_ENV_FILES];
+
 export default defineConfig({
   test: {
     projects: [
       {
         test: {
           name: "default",
-          exclude: ["**/node_modules/**", ...SHARED_PENDING_GRANT_LOCK_FILES],
+          exclude: ["**/node_modules/**", ...SERIALIZED_FILES],
         },
       },
       {
         test: {
           name: "shared-pending-grant-lock",
-          include: SHARED_PENDING_GRANT_LOCK_FILES,
+          include: SERIALIZED_FILES,
           fileParallelism: false,
         },
       },
