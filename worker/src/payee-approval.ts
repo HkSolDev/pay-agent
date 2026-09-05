@@ -20,6 +20,8 @@ export interface ApprovePayeeRequest {
   senderAddr: string;
   paymentMethod: PaymentMethod;
   grant: GrantRequest;
+  useExistingBeneficiary?: boolean;
+  recipientNickname?: string;
 }
 
 export interface ApprovePayeeDeps {
@@ -31,7 +33,7 @@ export interface ApprovePayeeDeps {
   // for how the lock itself is enforced (a database-level constraint, not
   // an application check-then-write).
   startPendingGrant: (input: ApprovePayeeRequest & { recipientNickname: string }) => Promise<
-    | { status: "started"; payeeId: string }
+    | { status: "started"; payeeId: string; recipientNickname?: string }
     | { status: "locked" }
   >;
   // Fires the real `policy enable` CLI call. Deliberately not awaited by
@@ -51,6 +53,9 @@ function validPaymentMethod(method: PaymentMethod): boolean {
 }
 
 function validRequest(request: ApprovePayeeRequest): boolean {
+  if (request.useExistingBeneficiary && (!request.recipientNickname || request.recipientNickname.trim() === "")) {
+    return false;
+  }
   return request.name.trim() !== "" && request.firstName.trim() !== "" && request.lastName.trim() !== ""
     && /^[^@\s]+@[^@\s]+$/.test(request.senderAddr)
     && validPaymentMethod(request.paymentMethod)
@@ -83,10 +88,18 @@ export async function approvePayee(request: ApprovePayeeRequest, deps: ApprovePa
   const existing = await deps.findExistingApproval(request);
   if (existing) return { status: "already_approved", payeeId: existing.payeeId };
 
-  const recipient = await deps.createPerfloRecipient(request);
-  const started = await deps.startPendingGrant({ ...request, recipientNickname: recipient.recipientNickname });
+  let recipientNickname: string;
+  if (request.useExistingBeneficiary && request.recipientNickname) {
+    recipientNickname = request.recipientNickname.trim();
+  } else {
+    const recipient = await deps.createPerfloRecipient(request);
+    recipientNickname = recipient.recipientNickname;
+  }
+
+  const started = await deps.startPendingGrant({ ...request, recipientNickname });
   if (started.status === "locked") return { status: "grant_in_progress" };
 
-  deps.enablePerfloGrant({ payeeId: started.payeeId, recipientNickname: recipient.recipientNickname, grant: request.grant });
+  const effectiveNickname = started.recipientNickname ?? recipientNickname;
+  deps.enablePerfloGrant({ payeeId: started.payeeId, recipientNickname: effectiveNickname, grant: request.grant });
   return { status: "pending_grant", payeeId: started.payeeId };
 }

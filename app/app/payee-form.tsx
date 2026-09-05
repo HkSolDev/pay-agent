@@ -5,7 +5,9 @@ import { createPayeeAction } from "./payee-actions";
 import { validatePayeeForm, type PayeeFormErrors, type PayeeFormInput } from "./payee-form-model";
 
 const EMPTY: PayeeFormInput = {
-  name: "", firstName: "", lastName: "", senderAddr: "", rail: "upi", vpa: "", accountNumber: "", ifsc: "",
+  name: "", firstName: "", lastName: "", senderAddr: "",
+  useExistingBeneficiary: false, recipientNickname: "",
+  rail: "upi", vpa: "", accountNumber: "", ifsc: "",
   perPaymentCapInr: "", totalCapInr: "", maxPayments: "", expiresAt: "",
 };
 
@@ -118,15 +120,38 @@ export function PayeeForm({ lockedByPayeeName }: PayeeFormProps) {
           />
           {errors.senderAddr ? <small className="field-error">{errors.senderAddr}</small> : null}
         </label>
+
+        <label className="confirm-row" style={{ gridColumn: "1 / -1", margin: "2px 0 6px" }}>
+          <input
+            type="checkbox"
+            name="useExistingBeneficiary"
+            checked={!!form.useExistingBeneficiary}
+            onChange={(e) => set("useExistingBeneficiary", e.target.checked)}
+          />
+          <span>Use an existing Perflo beneficiary nickname</span>
+        </label>
+
         <label>
           <span>Recipient nickname</span>
-          <input
-            name="recipientNickname"
-            value={form.name ? `demo-${form.name.toLowerCase().replace(/\s+/g, "-")}` : ""}
-            readOnly
-            placeholder="e.g. sunrise-textiles"
-          />
+          {form.useExistingBeneficiary ? (
+            <input
+              name="recipientNickname"
+              value={form.recipientNickname ?? ""}
+              onChange={(e) => set("recipientNickname", e.target.value)}
+              placeholder="e.g. hemant-real"
+              style={errors.recipientNickname ? { borderColor: "#c0392b" } : undefined}
+            />
+          ) : (
+            <input
+              name="recipientNickname"
+              value={form.name ? `demo-${form.name.toLowerCase().replace(/\s+/g, "-")}` : ""}
+              readOnly
+              placeholder="e.g. sunrise-textiles"
+            />
+          )}
+          {errors.recipientNickname ? <small className="field-error">{errors.recipientNickname}</small> : null}
         </label>
+
         <label>
           <span>Per-payment cap (₹)</span>
           <input

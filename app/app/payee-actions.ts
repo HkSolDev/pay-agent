@@ -18,6 +18,8 @@ function readFormInput(formData: FormData): PayeeFormInput {
     firstName: String(formData.get("firstName") ?? "").trim(),
     lastName: String(formData.get("lastName") ?? "").trim(),
     senderAddr: String(formData.get("senderAddr") ?? "").trim(),
+    useExistingBeneficiary: formData.get("useExistingBeneficiary") === "on",
+    recipientNickname: String(formData.get("recipientNickname") ?? "").trim(),
     rail: String(formData.get("rail") ?? "upi").trim() as "upi" | "bank_neft",
     vpa: String(formData.get("vpa") ?? "").trim(),
     accountNumber: String(formData.get("accountNumber") ?? "").trim(),
@@ -42,6 +44,8 @@ export async function createPayeeAction(formData: FormData): Promise<void> {
     firstName: input.firstName,
     lastName: input.lastName,
     senderAddr: input.senderAddr,
+    useExistingBeneficiary: input.useExistingBeneficiary,
+    recipientNickname: input.useExistingBeneficiary ? input.recipientNickname : undefined,
     paymentMethod: paymentMethodFromForm(input),
     grant: {
       perPaymentCapInr: input.perPaymentCapInr,
@@ -50,6 +54,7 @@ export async function createPayeeAction(formData: FormData): Promise<void> {
       expiresAt: input.expiresAt,
     },
   }, realApprovePayeeDeps);
+
 
   if (result.status === "confirmation_required") throw new Error("Confirm the payee approval before submitting.");
   if (result.status === "invalid_request") throw new Error("Invalid payee, rail, or grant details.");

@@ -905,3 +905,21 @@ failure, processing/timeout, and missing-record outcomes are explicitly mapped;
 existing tx-hash tests remain unchanged and pass. The separate-session reviewer
 requirement could not be satisfied inside this single session, so this limitation
 is recorded rather than claimed away.
+
+## 5 Sep 2026 — Link existing Perflo beneficiary nicknames in payee approval
+
+The Add Payee form (`app/app/payee-form.tsx`) previously hard-coded `recipientNickname` as a readOnly input computed from `demo-${name-slug}`, forcing every payee approval to register a new Perflo beneficiary via `beneficiary add` (`worker/src/payee-approval-deps.ts`). When retrying approval for an existing identity or linking a pre-seeded/manually-created beneficiary (such as `hemant-real`), this unconditionally overwrote the payee's `recipientNickname` with a generated slug and attempted duplicate/invalid beneficiary registrations.
+
+To resolve this limitation without duplicating the payee approval state machine, we implemented Option 1:
+1. Added a toggle `"Use an existing Perflo beneficiary nickname"` (`useExistingBeneficiary: boolean`) to `PayeeFormInput` and the form UI.
+2. When checked, `recipientNickname` becomes an editable text input validated to be non-empty (`validatePayeeForm`), while continuing to default to the readOnly slug when unchecked.
+3. `createPayeeAction` extracts `useExistingBeneficiary` and `recipientNickname` from form data and forwards them to `approvePayee`.
+4. In `approvePayee`, when `useExistingBeneficiary && request.recipientNickname` is provided, `deps.createPerfloRecipient` (and the `createPerfloBeneficiary` CLI call) is skipped entirely, proceeding straight to `startPendingGrant` and `enablePerfloGrant` with the specified nickname.
+5. In `realApprovePayeeDeps.startPendingGrant`, for an existing identity retry (`status === "not_approved"`), `nicknameToUse` preserves the existing row's `recipientNickname` (or updates to the explicitly provided nickname), preventing overwrite by any computed demo slug.
+
+Payment-review pass:
+- States & transitions: Payee state machine remains `pending` -> `pending_grant` -> `approved` | `not_approved`. Expiry and retry mechanics are preserved.
+- Five scenarios: Success, definite failure, timeout/expiry, concurrent claim locking (`grant_in_progress`), and retry after failure were tested.
+- Field boundary: `recipientNickname` traces from user input -> `createPayeeAction` -> `approvePayee` -> `startPendingGrant` (DB `Payee.recipientNickname`) -> `enablePerfloGrant` (`perflo policy enable <nickname>`). No CLI `beneficiary add` is run on this path.
+- Off-limits compliance: No off-limits payment execution or crypto files were modified.
+- Testing: TDD test-first suite added to `worker/src/payee-approval.test.ts`, `worker/src/payee-approval-deps.integration.test.ts`, `app/app/payee-form-model.test.ts`, and `app/app/payee-actions.test.ts`. 56/56 focused tests passing.

@@ -77,6 +77,43 @@ describe("Payee approval — an owner-controlled setup event", () => {
     expect(d.calls).toEqual(["recipient", "startPendingGrant"]);
   });
 
+  it("skips recipient creation and uses the existing Perflo beneficiary nickname when useExistingBeneficiary is true", async () => {
+    const d = deps();
+    let startedNickname: string | undefined;
+    let enabledNickname: string | undefined;
+    d.startPendingGrant = async (input) => {
+      startedNickname = input.recipientNickname;
+      d.calls.push("startPendingGrant");
+      return { status: "started", payeeId: "riya-1", recipientNickname: input.recipientNickname };
+    };
+    d.enablePerfloGrant = (input) => {
+      enabledNickname = input.recipientNickname;
+      d.calls.push("enablePerfloGrant");
+    };
+
+    await expect(approvePayee({
+      ...request,
+      useExistingBeneficiary: true,
+      recipientNickname: "hemant-real",
+    }, d)).resolves.toEqual({ status: "pending_grant", payeeId: "riya-1" });
+
+    expect(d.calls).toEqual(["startPendingGrant", "enablePerfloGrant"]);
+    expect(startedNickname).toBe("hemant-real");
+    expect(enabledNickname).toBe("hemant-real");
+  });
+
+  it("rejects request when useExistingBeneficiary is true but recipientNickname is missing or blank", async () => {
+    for (const badNickname of ["", "   ", undefined as unknown as string]) {
+      const d = deps();
+      await expect(approvePayee({
+        ...request,
+        useExistingBeneficiary: true,
+        recipientNickname: badNickname,
+      }, d)).resolves.toEqual({ status: "invalid_request" });
+      expect(d.calls).toEqual([]);
+    }
+  });
+
   it("rejects invalid payment rails, unsafe grant caps, and missing beneficiary name fields before any external call", async () => {
     for (const badRequest of [
       { ...request, paymentMethod: { kind: "upi" as const, vpa: "invalid" } },

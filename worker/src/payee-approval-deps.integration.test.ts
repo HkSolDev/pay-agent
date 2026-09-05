@@ -215,7 +215,52 @@ describe("retry after denial/expiry reuses the same payee row", () => {
 
     await clearAnyStrayLock();
   });
+
+  it("preserves the original recipientNickname on an existing-identity retry when the existing beneficiary path is used", async () => {
+    const first = await approvePayee(request, deps);
+    if (first.status !== "pending_grant") throw new Error("unreachable");
+
+    // Simulate payee pre-seeded with a real Perflo beneficiary nickname, currently not_approved
+    await prisma.payee.update({
+      where: { id: first.payeeId },
+      data: { recipientNickname: "hemant-real", status: "not_approved", lastGrantOutcome: "denied" },
+    });
+
+    let recipientCreationCalled = false;
+    let enabledNickname: string | undefined;
+    const testDeps = {
+      ...deps,
+      createPerfloRecipient: async () => {
+        recipientCreationCalled = true;
+        return { recipientNickname: "newly-computed-demo-slug" };
+      },
+      enablePerfloGrant: (input: { payeeId: string; recipientNickname: string; grant: any }) => {
+        enabledNickname = input.recipientNickname;
+      },
+    };
+
+    // Re-trigger approval for the same sender with useExistingBeneficiary: true and recipientNickname: "hemant-real"
+    const retry = await approvePayee({
+      ...request,
+      useExistingBeneficiary: true,
+      recipientNickname: "hemant-real",
+    }, testDeps);
+
+    expect(retry.status).toBe("pending_grant");
+    if (retry.status !== "pending_grant") throw new Error("unreachable");
+    expect(retry.payeeId).toBe(first.payeeId);
+
+    // Assert beneficiary creation was skipped entirely
+    expect(recipientCreationCalled).toBe(false);
+
+    // Assert recipientNickname in the database is preserved as "hemant-real" (not overwritten)
+    const updated = await prisma.payee.findUniqueOrThrow({ where: { id: first.payeeId } });
+    expect(updated.recipientNickname).toBe("hemant-real");
+    expect(updated.status).toBe("pending_grant");
+    expect(enabledNickname).toBe("hemant-real");
+  });
 });
+
 
 describe("applyGrantOutcome", () => {
   it("resolves a pending_grant payee to approved, clearing the pending fields", async () => {

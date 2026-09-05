@@ -5,6 +5,8 @@ export interface PayeeFormInput {
   firstName: string;
   lastName: string;
   senderAddr: string;
+  useExistingBeneficiary?: boolean;
+  recipientNickname?: string;
   rail: "upi" | "bank_neft";
   vpa: string;
   accountNumber: string;
@@ -46,6 +48,12 @@ export function validatePayeeForm(input: PayeeFormInput): { valid: boolean; erro
   if (input.lastName.trim() === "") errors.lastName = "Last name is required.";
   if (!EMAIL.test(input.senderAddr)) errors.senderAddr = "Enter a valid sender email identity.";
 
+  if (input.useExistingBeneficiary) {
+    if (!input.recipientNickname || input.recipientNickname.trim() === "") {
+      errors.recipientNickname = "Beneficiary nickname is required when using an existing beneficiary.";
+    }
+  }
+
   const method = paymentMethodFromForm(input);
   if (!validatePaymentMethod(method)) {
     if (input.rail === "upi") {
@@ -65,6 +73,7 @@ export function validatePayeeForm(input: PayeeFormInput): { valid: boolean; erro
 
   return { valid: Object.keys(errors).length === 0, errors };
 }
+
 
 /** Raw bank/UPI values are never rendered after saving — only this masked form. */
 export function maskRailValue(method: PaymentMethod): string {
