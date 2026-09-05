@@ -1,7 +1,27 @@
 # Perflo AP Agent — Hands-off Handoff
 
-Last verified: 2026-09-05, later the same day (T-17 auth-failure hard-fail gap fixed in `level1-pipeline.ts`; test-first, all 5 red-team fixtures green; **not yet committed**)
-Branch: `feat/perflo-beneficiary-approval` — verified via `git status` and `git log --oneline -5` just before writing this line. HEAD is still `a51c209`. `git status` shows this session's own change (`worker/src/level1-pipeline.ts`, 1 file) plus separate uncommitted drift in `app/app/payee-actions.test.ts`, `app/app/queue-view.tsx`, `app/app/actions.ts`, `worker/src/payee-approval-deps.ts`, `worker/src/payee-approval-deps.enable-grant.test.ts`, `worker/src/llm-extractor.ts`/`.test.ts`, and an untracked `.codex/` directory — all from other sessions actively working on this branch concurrently, confirmed via `git diff --stat` to carry zero lines from this task.
+Last verified: 2026-09-05, later the same day (test-suite non-determinism: env-leak fix + vitest.config.ts fixing the real cross-file lock race; 3 consecutive `pnpm test` runs byte-identical; **not yet committed, reported back for verification per explicit instruction**)
+Branch: `feat/perflo-beneficiary-approval` — verified via `git status` and `git log --oneline -5` just before writing this line. HEAD is `1b9db99`. `git status` shows this session's own changes (`worker/src/payee-store.integration.test.ts`, `worker/src/demo-scenarios.integration.test.ts`, `worker/src/payee-rail-lifecycle.integration.test.ts`, `worker/src/payee-approval-deps.integration.test.ts`, new `vitest.config.ts`) plus separate uncommitted drift in `app/app/payee-actions.test.ts`, `worker/src/payee-approval-deps.ts`, `worker/src/payee-approval-deps.enable-grant.test.ts`, and an untracked `.codex/` directory from another session's concurrent work — confirmed via `git diff --stat` to carry zero lines from this task (this task's own diff on those three files is exactly nothing).
+
+## Session summary — 2026-09-05, later the same day (test-suite non-determinism fixed: env-var leak + the real grant-approval lock race)
+
+**What this session did, in one sentence:** fixed the mechanical env-var-leak bug across four integration test files exactly as diagnosed, then found that the second bug ("a remaining lock-acquisition race" in `payee-approval-deps.ts`) was misdiagnosed — the application's locking logic was already correct — and the real cause was vitest's default file-level parallelism letting four files race one real, table-wide database constraint; fixed with a new `vitest.config.ts`, not an application-code change.
+
+**Read `docs/DECISIONS.md`'s entry titled "Test-suite non-determinism: two real bugs found, one confirmed to be the wrong shape"** for the full technical reasoning, including exact file/line references and the migration name for the partial unique index — this section is the narrative/status version.
+
+**Why did it this way, for the next session's benefit:**
+- **Re-verified both bugs from real command output before touching code**, per `/test-driven-development`'s red-first discipline: ran `pnpm test` three times cold to confirm non-determinism (11, then 10, then 14 failures — the counts themselves were unstable, confirming the task's premise) before any fix.
+- **Bug #1 fixed exactly as described**: `worker/src/payee-store.integration.test.ts`, `worker/src/demo-scenarios.integration.test.ts`, `worker/src/payee-rail-lifecycle.integration.test.ts`, `worker/src/payee-approval-deps.integration.test.ts` each got the identical save-in-module-scope/restore-in-`afterAll` pattern already proven correct in `worker/src/payee-crypto.test.ts` — no invention, just consistency.
+- **Bug #2's given description didn't survive verification.** Read `startPendingGrant` in `worker/src/payee-approval-deps.ts` line by line: both the existing-payee retry path (a conditional `updateMany` CAS) and the new-payee path (relying on the real partial unique index, migration `20260904142701`) already correctly turn a `P2002` unique-violation into `{status: "locked"}`. Ran `payee-approval-deps.integration.test.ts`'s own concurrent-lock tests 5 times in isolation — 5/5 green, never reproduced there. The actual race only showed up when the full suite ran, and only across files, which pointed at test-runner parallelism, not application logic.
+- **Confirmed the real mechanism before proposing a fix**: `worker/src/payee-approval-deps.integration.test.ts`, `worker/src/payee-approval-deps.enable-grant.test.ts`, `worker/src/reconcile-grant-approvals.test.ts`, and `app/app/payee-actions.test.ts` are the only four files that create/mutate a `status: "pending_grant"` row, and no `vitest.config.ts` existed to stop vitest's default file-level parallelism from running all four concurrently against the one real global constraint in the shared Postgres database.
+- **Asked before widening scope**, twice: once when the payee-store/demo-scenarios stray-row bug was found (a real payee, "Test Auto-Pay Vendor", used for a *different*, ongoing manual-verification workflow documented in `worker/src/manual-edge-case-run.ts` and `docs/DECISIONS.md`'s fee-safety entries — confirmed it decrypts fine under the real key, so it was not touched, and the two affected tests were left red by the user's explicit choice), and again before creating `vitest.config.ts` itself, since neither was in the original file list. Scoped the config narrowly (`test.projects`, only the four affected files lose parallelism) rather than serializing the whole 336-test suite.
+- **No application-code change was needed for bug #2** — `worker/src/payee-approval-deps.ts`, `worker/src/payee-approval-deps.enable-grant.test.ts`, `worker/src/reconcile-grant-approvals.test.ts`, and `app/app/payee-actions.test.ts` all show zero diff from this task (confirmed via `git diff --stat`); the fix is entirely `vitest.config.ts`.
+
+**Verification actually performed, not just claimed:**
+- Baseline (before any fix): `pnpm test` three times — 11 failed, then 10 failed, then (mid-fix, bug #1 applied but not #2) 14 failed. Confirms non-determinism, not a fixed count.
+- After both fixes: `pnpm test` three consecutive times, full output captured — **`4 failed | 332 passed (336)` every single time**, the exact same two files/four tests each run (`payee-store.integration.test.ts` ×2, `demo-scenarios.integration.test.ts` ×2 — the documented, left-red-by-agreement stray-data issue). Byte-identical failure sets across all three runs.
+- `git diff --stat` confirms this session's changes: `payee-store.integration.test.ts`, `demo-scenarios.integration.test.ts`, `payee-rail-lifecycle.integration.test.ts`, `payee-approval-deps.integration.test.ts` (6 lines each, the env save/restore), plus new `vitest.config.ts`. Zero lines in `worker/src/level1-pipeline.ts`, `tests/injections/*`, `worker/src/llm-extractor.ts`/`.test.ts`, `app/app/queue-view.tsx`, `app/app/actions.ts` (the explicitly off-limits files), and zero lines in `worker/src/payee-approval-deps.ts`, `worker/src/payee-approval-deps.enable-grant.test.ts`, `reconcile-grant-approvals.test.ts`, `app/app/payee-actions.test.ts` (in-scope files that turned out to need no change for this bug).
+- Nothing committed — reporting back for verification per the task's explicit instruction.
 
 ## Session summary — 2026-09-05, later the same day (T-17 fixed: auth-failure hard fail no longer stripped for `details_changed`)
 
@@ -792,3 +812,73 @@ model and fallback paths. The system prompt now also says that label tokens
 such as `Name` are never the value. `worker/src/llm-extractor.test.ts` contains
 the regression case. Its red run reported `Expected: "Test Vendor"` and
 `Received: "Name"`; after the fix the focused file reports 9/9 tests passing.
+
+## 5 Sep 2026 — Abhinav / Perflo browser-approval runbook
+
+### Before starting
+
+1. Open the Payees page and confirm no other row says **waiting for approval**. The database and UI allow only one live `pending_grant` approval at a time.
+2. Confirm that the CLI is connected to the intended Perflo owner account. The approval browser must use that same account. If Abhinav is only the payee, he does **not** approve his own grant; the connected account holder does. Abhinav opens the link only if he is the authorized Perflo account holder for this run.
+3. Enter Abhinav's verified bank/NEFT details and the intended INR per-payment cap, total cap, payment count, and grant expiry. The current connected account supports the bank/IFSC beneficiary route here; this setup step does not send money.
+
+### What appears on screen
+
+1. Tick **I confirm this payee, rail, and grant** and click **Add payee**. The button reads **Saving…** while the server action validates the form and creates the Perflo beneficiary.
+2. The form returns without waiting for the browser decision. On the Payees page, Abhinav's row is created with the badge **waiting for approval**. Before the CLI has emitted its link, the row says **Starting the approval request…**. If the server-rendered list has not refreshed yet, reload `/payees`; do not submit a second time.
+3. `perflo policy enable` emits a fresh, per-run URL shaped like `https://app.perflo.ai/approve?sid=...`. The exact URL cannot be prewritten or reused. Once captured, Abhinav's row says **Waiting for your approval in Perflo — open the approval link**.
+4. Open that link in a normal browser session signed into the same Perflo owner account connected to the CLI. Review the named beneficiary and the per-payment, total, count, and expiry limits, then approve or deny there. Keep the Payees page open or refresh it to see the resulting status.
+5. From the owner's side, the row can remain **waiting for approval** while the CLI process stays open. The measured clean Perflo wait was about 615.88 seconds (roughly 10 minutes 16 seconds); the app's hard backstop and `pending_grant` expiry are both 660,000 ms (11 minutes). Do not click **Add payee** again while waiting. This flow only authorizes future payments within caps; it does not create a `PaymentIntent`, send the current invoice, or enable the separate **Auto-pay** toggle.
+
+### The three outcomes
+
+- **Approved:** Perflo exits with clean `ok:true`. The row changes from `pending_grant` to `approved`, `grantApproved` becomes true, `approvedAt` is set, `lastGrantOutcome` stays null, and the one-time approval URL is cleared. The UI badge becomes **approved**. Auto-pay remains off unless separately enabled and globally allowed.
+- **Denied / clean Perflo failure:** Perflo exits with clean `ok:false`. This includes an explicit refusal and, in the currently observed CLI behavior, its own clean no-action timeout at roughly 615.88 seconds. The row becomes `not_approved`, `lastGrantOutcome` becomes `denied`, `grantApproved` remains false, and the URL is cleared. The UI badge becomes **approval denied**.
+- **Timeout-unknown / ambiguous process result:** If the app's 11-minute timer kills the child process, the CLI cannot start, or its final output cannot be classified, the code does not guess. The row initially remains `pending_grant` with `lastGrantOutcome` null and can still show **waiting for approval**. Once `pendingGrantExpiresAt` has passed, the periodic/startup expiry sweep conditionally changes it to `not_approved`, sets `lastGrantOutcome` to `expired`, and clears the URL. The UI then shows **approval expired**. Do not interpret the intermediate pending state as approved or automatically retry it.
+
+## 5 Sep 2026 — repository visibility check and proposed owner commands
+
+Read-only `gh repo view --json visibility,nameWithOwner,url` returned `HkSolDev/pay-agent`, `PUBLIC`, `https://github.com/HkSolDev/pay-agent`. No repository setting or collaborator was changed.
+
+Changing visibility requires repository administration permission and the installed GitHub CLI's explicit consequence acknowledgement. Its warning names possible loss of stars/watchers, detachment of public forks, disabled push rulesets, and continued accessibility implications for Actions history/logs. Adding Abhinav is a separate REST mutation and may create a pending invitation that he must accept. `permission=push` is proposed so he can contribute code; use `permission=pull` instead if read-only access is intended.
+
+Commands proposed, **not run**:
+
+```bash
+gh repo edit HkSolDev/pay-agent --visibility private --accept-visibility-change-consequences
+gh api --method PUT "repos/HkSolDev/pay-agent/collaborators/ABHINAV_GITHUB_USERNAME" -f permission=push
+```
+
+Replace `ABHINAV_GITHUB_USERNAME` with the exact GitHub login before running the invitation command. These are two independent owner decisions: making the repository private does not add Abhinav, and inviting Abhinav does not change visibility.
+
+## Session summary — 2026-09-05, later the same day (Live browser regression pass: review queue filter, honest error message, LLM extractor)
+
+**What this session did, in one sentence:** verified all three recently landed fixes (`40eccc4`, `63b6a90`, `a63d1d8`) in a real browser session on `http://localhost:3000` with zero source code changes, confirming rejected invoices leave "Needs approval", `preparePayment` displays the honest prerequisite error, and a fresh live Gmail invoice ("Invoice TEST-02") extracts "Apex Logistics" instead of "Name".
+
+**Verification results per check:**
+1. **Check 1 — Review Queue & Rejected Invoices (`40eccc4`)**:
+   - Navigated to `http://localhost:3000/`. Confirmed "Invoice TEST-01" (previously rejected) is completely absent from the "Needs approval" tab.
+   - Verified the "Needs approval" counter reflected the excluded item (counter was 17, down from 18, and later 16 after another item was processed).
+   - Switched to the "All activity" tab: confirmed "Invoice TEST-01" is present and renders with the neutral `rejected` badge (`all_activity_rejected_badge_1788587475993.png`).
+2. **Check 2 — Honest `preparePayment` Error Message (`63b6a90`)**:
+   - Selected an invoice with an unresolved payee (`resolvedPayeeId: null`).
+   - Clicked "Prepare payment ˅" $\rightarrow$ "Prepare →" in the review queue card's `PaymentCell`.
+   - Confirmed the Next.js runtime error overlay surfaced verbatim: `"This invoice's payee hasn't been approved yet — approve the payee in /payees first."` (`unapproved_payee_error_1788587769245.png`).
+3. **Check 3 — Live Gmail Ingestion & LLM Extractor Fix (`a63d1d8`)**:
+   - Sent a fresh live test email via Composio's `GMAIL_SEND_EMAIL` to `hemantkumar4213@gmail.com` with subject `"Invoice TEST-02"` and body containing `"Payee Name: Apex Logistics"`, amount ₹650, IFSC `HDFC0000001`, and due date (Gmail message ID: `1a07024a8cbfdb18`).
+   - Ingested via `worker/src/sync-once-cli.ts` (row `cmtnz14nr0000x2aqo81qx6ht`).
+   - Verified Postgres record: `extractionSummary.payeeName: "Apex Logistics"` (confidence 1.0), `amount: "650.00 INR"`, `policyDecision: "needs_approval"`.
+   - Reloaded `http://localhost:3000/`: confirmed the card displays `₹650.00 → Apex Logistics [BANK_NEFT]` (`check3_queue_card_1788587909246.png`).
+   - Opened the review drawer: confirmed the "Extracted payment details" displays `Apex Logistics` (Confidence 100%) (`check3_review_drawer_payee_1788587968636.png`).
+   - Proved that the previous label extraction bug (which captured `"Name"`) is completely resolved on live ingested data.
+
+## Session summary — 2026-09-05 (read-only real payment execution review)
+
+Findings, ranked by severity (only this handoff and `docs/DECISIONS.md` were appended):
+
+1. **Critical — a confirmed provider payment can be recorded as retryable and paid twice when the success-state database write fails.** `worker/src/payment-execution.ts:40-45` performs the external payment before persisting `paid`; the broad catch at `worker/src/payment-execution.ts:45-58` classifies every non-typed-unknown exception as `failed`. A Prisma error on the success update can consequently expose Retry after money moved. Perflo receives no idempotency key (`worker/src/perflo-cli.ts:153-163`), so the retry can create a second real payment.
+2. **High — Perflo unknown outcomes are permanently unreconcilable despite a returned provider reference.** The real reference extracted at `worker/src/perflo-cli.ts:99-105` exists only in the error message; `worker/src/payment-executor-perflo.ts:43-45` stores the local idempotency key instead. `worker/src/payment-reconcile.ts:20-26,49-59` skips it, and Perflo status lookup is unsupported at `worker/src/payment-executor-perflo.ts:53-55`.
+3. **High — crash-after-claim leaves a permanently frozen, potentially already-paid intent.** Claim commits before provider execution at `worker/src/payment-claim.ts:26-33` and `worker/src/manual-pay.ts:51-62`; `worker/src/payment-reconcile.ts:38-49` explicitly excludes `claimed`. There is no lease, expiry, lookup-by-idempotency-key, or manual state transition in this path.
+4. **High — unconditional pre-confirm/re-prepare repairs can mutate `claimed` and `paid` payment facts.** `app/app/actions.ts:71-87` and `app/app/actions.ts:51-55` update recipient/amount/currency without a status predicate. Execution loads fields before claim at `worker/src/manual-pay.ts:51-57` instead of paying the claimed snapshot returned at `worker/src/payment-claim.ts:33-40`; concurrent actions can make the final row disagree with what was actually sent.
+5. **Medium — raw provider/process output crosses into persistent UI-visible errors and logs.** `worker/src/perflo-cli.ts:53-58,90-96,183-190` constructs errors from raw output; `worker/src/payment-execution.ts:52-58` stores it, `app/app/payment-cell.tsx:138-144` renders it verbatim, and `worker/src/payment-execution.ts:60-64` logs the full error. This can expose references, approval/session URLs, or diagnostic payloads.
+
+Verification: branch `feat/perflo-beneficiary-approval`, HEAD `1b9db99`. Focused Vitest run covered Perflo classification, executor adapter, manual-pay, claim, and reconcile tests. Four unit files passed (33 tests). The two real-Postgres suites failed during setup/cleanup because the database was unreachable, blocking all 11 claim/reconciliation integration tests. No `worker/src` or `app/app` files were edited.
